@@ -15,7 +15,7 @@ class MeetingSocketClient {
       return this.socket;
     }
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000";
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://google-meet-q33t.onrender.com";
     this.socket = io(apiUrl, {
       transports: ["websocket", "polling"],
       withCredentials: true,
