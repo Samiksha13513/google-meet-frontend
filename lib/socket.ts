@@ -1,9 +1,11 @@
 import { io } from "socket.io-client";
 
-export const socket = io(
-  // "http://localhost:5000",
-  "http://192.168.1.5:5000",
-  {
-    transports: ["websocket"],
-  }
-);
+const socketUrl =
+  process.env.NEXT_PUBLIC_SOCKET_URL ||
+  (typeof window !== "undefined"
+    ? window.location.origin
+    : "http://localhost:5000");
+
+export const socket = io(socketUrl, {
+  transports: ["websocket"],
+});
