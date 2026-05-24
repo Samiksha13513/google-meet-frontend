@@ -298,8 +298,27 @@ export default function MeetingRoom() {
 
     peer.ontrack = (event) => {
       if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject =
-          event.streams[0];
+        remoteVideoRef.current.srcObject = event.streams[0];
+
+        // Try to play the incoming stream immediately. Browsers
+        // may block autoplay with audio — muting the element
+        // or calling play() on user gesture helps. We attempt
+        // to play and if it fails, mute and try again to allow
+        // autoplay on mobile/strict autoplay policies.
+        const playPromise = remoteVideoRef.current.play?.();
+
+        if (playPromise) {
+          playPromise.catch(() => {
+            try {
+              remoteVideoRef.current!.muted = true;
+              remoteVideoRef.current!.play?.().catch(() => {
+                // ignore
+              });
+            } catch (e) {
+              // ignore
+            }
+          });
+        }
       }
     };
 
