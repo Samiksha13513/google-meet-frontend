@@ -169,20 +169,28 @@ export default function MeetingRoom() {
 
     const handleUserJoined = async () => {
       const peer = peerRef.current;
+      console.log("[WebRTC] handleUserJoined", { peer: !!peer, state: peer?.signalingState });
 
       if (!peer) return;
 
+      try {
       const offer =
         await peer.createOffer();
+        console.log("[WebRTC] Created offer");
 
       await peer.setLocalDescription(
         offer
       );
+        console.log("[WebRTC] Set local description (offer)");
 
       socket.emit("offer", {
         roomId: meetingCode,
         offer,
       });
+        console.log("[WebRTC] Sent offer to peer");
+      } catch (error) {
+        console.error("[WebRTC] Error in handleUserJoined:", error);
+      }
     };
 
     const handleOffer = async (
@@ -191,24 +199,38 @@ export default function MeetingRoom() {
       }
     ) => {
       const peer = peerRef.current;
+      console.log("[WebRTC] handleOffer received", { peer: !!peer, state: peer?.signalingState });
 
       if (!peer) return;
+
+      try {
+        // Only set remote description if we haven't already
+        if (peer.signalingState !== "stable" && peer.signalingState !== "have-remote-offer") {
+          console.warn("[WebRTC] Unexpected signaling state for offer:", peer.signalingState);
+        }
 
       await peer.setRemoteDescription(
         data.offer
       );
+        console.log("[WebRTC] Set remote description (offer)");
 
       const answer =
         await peer.createAnswer();
+        console.log("[WebRTC] Created answer");
 
       await peer.setLocalDescription(
         answer
       );
+        console.log("[WebRTC] Set local description (answer)");
 
       socket.emit("answer", {
         roomId: meetingCode,
         answer,
       });
+        console.log("[WebRTC] Sent answer to peer");
+      } catch (error) {
+        console.error("[WebRTC] Error in handleOffer:", error);
+      }
     };
 
     const handleAnswer = async (
@@ -217,12 +239,22 @@ export default function MeetingRoom() {
       }
     ) => {
       const peer = peerRef.current;
+      console.log("[WebRTC] handleAnswer received", { peer: !!peer, state: peer?.signalingState });
 
       if (!peer) return;
+
+      try {
+        if (peer.signalingState !== "have-local-offer") {
+          console.warn("[WebRTC] Unexpected signaling state for answer:", peer.signalingState);
+        }
 
       await peer.setRemoteDescription(
         data.answer
       );
+        console.log("[WebRTC] Set remote description (answer)");
+      } catch (error) {
+        console.error("[WebRTC] Error in handleAnswer:", error);
+      }
     };
 
     const handleIceCandidate = async (
@@ -238,9 +270,15 @@ export default function MeetingRoom() {
       )
         return;
 
+      try {
+        console.log("[WebRTC] Adding ICE candidate", { candidate: data.candidate.candidate?.substring(0, 50) });
       await peer.addIceCandidate(
         data.candidate
       );
+        console.log("[WebRTC] ICE candidate added successfully");
+      } catch (error) {
+        console.warn("[WebRTC] Error adding ICE candidate:", error);
+      }
     };
 
     socket.on(
@@ -295,30 +333,41 @@ export default function MeetingRoom() {
       createPeerConnection();
 
     peerRef.current = peer;
+    console.log("[WebRTC] Peer connection created");
 
     peer.ontrack = (event) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
+      console.log("[WebRTC] ontrack fired", {
+        tracks: event.streams[0]?.getTracks?.().map((t) => ({ kind: t.kind, enabled: t.enabled })),
+        streamId: event.streams[0]?.id,
+      });
 
-        // Try to play the incoming stream immediately. Browsers
-        // may block autoplay with audio — muting the element
-        // or calling play() on user gesture helps. We attempt
-        // to play and if it fails, mute and try again to allow
-        // autoplay on mobile/strict autoplay policies.
+      if (remoteVideoRef.current) {
+        const oldStream = remoteVideoRef.current.srcObject as MediaStream;
+        if (oldStream?.id === event.streams[0]?.id) {
+          console.log("[WebRTC] Remote stream already set, skipping");
+          return;
+        }
+
+        remoteVideoRef.current.srcObject = event.streams[0];
+        console.log("[WebRTC] Remote stream attached to video element");
+
         const playPromise = remoteVideoRef.current.play?.();
 
         if (playPromise) {
           playPromise.catch(() => {
             try {
+              console.log("[WebRTC] Autoplay blocked, muting and retrying");
               remoteVideoRef.current!.muted = true;
               remoteVideoRef.current!.play?.().catch(() => {
-                // ignore
+                console.warn("[WebRTC] Failed to play remote video even with mute");
               });
             } catch (e) {
-              // ignore
+              console.error("[WebRTC] Error playing remote video:", e);
             }
           });
         }
+      } else {
+        console.warn("[WebRTC] Remote video ref not available");
       }
     };
 
@@ -326,6 +375,10 @@ export default function MeetingRoom() {
       event
     ) => {
       if (event.candidate) {
+        console.log("[WebRTC] ICE candidate generated", {
+          candidate: event.candidate.candidate?.substring(0, 50),
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+        });
         socket.emit(
           "ice-candidate",
           {
@@ -334,30 +387,50 @@ export default function MeetingRoom() {
               event.candidate,
           }
         );
+      } else {
+        console.log("[WebRTC] ICE gathering complete");
       }
     };
 
-    peer.onconnectionstatechange =
-      () => {
-        console.log(
-          "Connection State:",
-          peer.connectionState
-        );
-      };
+    peer.onconnectionstatechange = () => {
+      console.log("[WebRTC] Connection state changed", {
+        connectionState: peer.connectionState,
+        iceConnectionState: peer.iceConnectionState,
+        signalingState: peer.signalingState,
+      });
+
+      if (peer.connectionState === "failed") {
+        console.error("[WebRTC] Peer connection failed. ICE state:", peer.iceConnectionState);
+      }
+
+      if (peer.connectionState === "connected") {
+        console.log("[WebRTC] Peer connection established successfully");
+      }
+    };
+
+    peer.oniceconnectionstatechange = () => {
+      console.log("[WebRTC] ICE connection state changed", {
+        iceConnectionState: peer.iceConnectionState,
+        iceGatheringState: peer.iceGatheringState,
+      });
+    };
 
     stream
       .getTracks()
       .forEach((track) => {
+        console.log("[WebRTC] Adding local track", { kind: track.kind, enabled: track.enabled });
         peer.addTrack(
           track,
           stream
         );
       });
+    console.log("[WebRTC] All local tracks added");
 
     socket.emit(
       "join-room",
       meetingCode
     );
+    console.log("[WebRTC] Emitted join-room to backend");
   };
 
   // =========================
@@ -880,7 +953,7 @@ export default function MeetingRoom() {
       {/* Bottom Controls */}
       {/* <div className="h-20 flex items-center justify-between px-6">
        */}
-       <div className="h-20 min-h-[80px] bg-[#202124] z-50 flex items-center justify-between px-6 relative">
+      <div className="h-20 min-h-20 bg-[#202124] z-50 flex items-center justify-between px-6 relative">
         {/* Left */}
         <div className="text-sm text-white/70">
           {currentTime} |
@@ -1129,7 +1202,7 @@ export default function MeetingRoom() {
             }
             className="h-12 px-6 rounded-full bg-red-500 flex items-center justify-center"
           >
-            <Phone className="rotate-[135deg]" />
+            <Phone className="rotate-135" />
           </button>
         </div>
 
