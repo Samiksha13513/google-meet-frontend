@@ -1,21 +1,13 @@
-import { getIceServers, FALLBACK_TURN_SERVER } from "./ice-servers";
+import { getIceServers } from "./ice-servers";
 
-export const createPeerConnection = () => {
-  // Start with STUN servers; TURN is added server-side if available
-  const iceServers = [
-    {
-      urls: "stun:stun.l.google.com:19302",
-    },
-    {
-      urls: "stun:stun1.l.google.com:19302",
-    },
-    {
-      urls: "stun:stun2.l.google.com:19302",
-    },
-    // Optional: Add fallback TURN for testing (replace with production credentials)
-    // FALLBACK_TURN_SERVER,
-  ];
+export const createPeerConnection = async () => {
+  const defaultTurnUrl =
+    process.env.NEXT_PUBLIC_TURN_SERVERS_ENDPOINT ||
+    (typeof window !== "undefined"
+      ? `${window.location.origin}/api/turn-servers`
+      : undefined);
 
+  const iceServers = await getIceServers(defaultTurnUrl);
   return new RTCPeerConnection({
     iceServers,
   });

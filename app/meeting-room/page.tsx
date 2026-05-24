@@ -25,7 +25,10 @@ import { useParams, useRouter } from "next/navigation";
 import { socket } from "@/lib/socket";
 
 import { getLocalStream } from "../../webrtc/media";
-import { createPeerConnection } from "../../webrtc/peer";
+import {
+  createPeerConnection,
+  logPeerConnectionState,
+} from "../../webrtc/peer";
 
 import { getMeetingByCode } from "@/lib/api";
 
@@ -124,6 +127,9 @@ export default function MeetingRoom() {
   const remoteVideoRef =
     useRef<HTMLVideoElement>(null);
 
+  const pendingCandidatesRef =
+    useRef<RTCIceCandidateInit[]>([]);
+
   const emojiRef =
     useRef<HTMLDivElement>(null);
 
@@ -158,6 +164,34 @@ export default function MeetingRoom() {
 
     peerRef.current?.close();
     peerRef.current = null;
+  };
+
+  const flushPendingIceCandidates = async (
+    peer: RTCPeerConnection
+  ) => {
+    const candidates =
+      pendingCandidatesRef.current;
+    if (!candidates.length)
+      return;
+
+    console.log(
+      "[WebRTC] Flushing pending ICE candidates",
+      candidates.length
+    );
+    for (const candidate of candidates) {
+      try {
+        await peer.addIceCandidate(candidate);
+        console.log(
+          "[WebRTC] Flushed pending ICE candidate"
+        );
+      } catch (error) {
+        console.warn(
+          "[WebRTC] Error flushing pending ICE candidate:",
+          error
+        );
+      }
+    }
+    pendingCandidatesRef.current = [];
   };
 
   // =========================
@@ -214,6 +248,8 @@ export default function MeetingRoom() {
       );
         console.log("[WebRTC] Set remote description (offer)");
 
+        await flushPendingIceCandidates(peer);
+
       const answer =
         await peer.createAnswer();
         console.log("[WebRTC] Created answer");
@@ -252,6 +288,8 @@ export default function MeetingRoom() {
         data.answer
       );
         console.log("[WebRTC] Set remote description (answer)");
+
+        await flushPendingIceCandidates(peer);
       } catch (error) {
         console.error("[WebRTC] Error in handleAnswer:", error);
       }
@@ -271,11 +309,20 @@ export default function MeetingRoom() {
         return;
 
       try {
-        console.log("[WebRTC] Adding ICE candidate", { candidate: data.candidate.candidate?.substring(0, 50) });
-      await peer.addIceCandidate(
-        data.candidate
-      );
-        console.log("[WebRTC] ICE candidate added successfully");
+        if (peer.remoteDescription && peer.remoteDescription.type) {
+          console.log("[WebRTC] Adding ICE candidate immediately", {
+            candidate: data.candidate.candidate?.substring(0, 50),
+          });
+          await peer.addIceCandidate(data.candidate);
+          console.log("[WebRTC] ICE candidate added successfully");
+        } else {
+          pendingCandidatesRef.current.push(
+            data.candidate
+          );
+          console.log(
+            "[WebRTC] Queued ICE candidate until remote description is ready"
+          );
+        }
       } catch (error) {
         console.warn("[WebRTC] Error adding ICE candidate:", error);
       }
@@ -330,7 +377,9 @@ export default function MeetingRoom() {
     }
 
     const peer =
-      createPeerConnection();
+      await createPeerConnection();
+
+    logPeerConnectionState(peer, "created");
 
     peerRef.current = peer;
     console.log("[WebRTC] Peer connection created");

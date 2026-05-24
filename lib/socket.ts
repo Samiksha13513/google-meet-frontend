@@ -7,5 +7,9 @@ const socketUrl =
     : "http://localhost:5000");
 
 export const socket = io(socketUrl, {
-  transports: ["websocket"],
+  transports: ["websocket", "polling"],
+  withCredentials: true,
+  reconnectionAttempts: 10,
+  reconnectionDelay: 500,
+  reconnectionDelayMax: 2000,
 });
