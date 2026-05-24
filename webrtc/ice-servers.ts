@@ -65,8 +65,20 @@ export async function getIceServers(
       });
 
       if (response.ok) {
-        const turnServers = await response.json();
-        return [...stunServers, ...turnServers];
+        const payload = await response.json();
+        if (Array.isArray(payload)) {
+          return [...stunServers, ...payload];
+        }
+
+        if (payload?.iceServers && Array.isArray(payload.iceServers)) {
+          return [...stunServers, ...payload.iceServers];
+        }
+
+        console.warn(
+          "[ICE] TURN endpoint response did not contain iceServers, using STUN-only",
+          payload
+        );
+        return stunServers;
       }
     } catch (error) {
       console.warn("[ICE] Failed to fetch dynamic TURN servers:", error);

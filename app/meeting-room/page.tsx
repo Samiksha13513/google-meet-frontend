@@ -194,6 +194,27 @@ export default function MeetingRoom() {
     pendingCandidatesRef.current = [];
   };
 
+  const logPeerState = (label: string) => {
+    if (!peerRef.current) {
+      console.log(`[WebRTC:${label}] Peer not initialized`);
+      return;
+    }
+    const peer = peerRef.current;
+    const state = {
+      label,
+      connectionState: peer.connectionState,
+      iceConnectionState: peer.iceConnectionState,
+      iceGatheringState: peer.iceGatheringState,
+      signalingState: peer.signalingState,
+      remoteDescriptionType: peer.remoteDescription?.type,
+      localDescriptionType: peer.localDescription?.type,
+      senders: peer.getSenders().length,
+      receivers: peer.getReceivers().length,
+      pendingCandidates: pendingCandidatesRef.current.length,
+    };
+    console.log(`[WebRTC:${label}]`, state);
+  };
+
   // =========================
   // SOCKET EVENTS
   // =========================
@@ -204,6 +225,7 @@ export default function MeetingRoom() {
     const handleUserJoined = async () => {
       const peer = peerRef.current;
       console.log("[WebRTC] handleUserJoined", { peer: !!peer, state: peer?.signalingState });
+      logPeerState("user-joined-received");
 
       if (!peer) return;
 
@@ -211,11 +233,13 @@ export default function MeetingRoom() {
       const offer =
         await peer.createOffer();
         console.log("[WebRTC] Created offer");
+        logPeerState("after-createOffer");
 
       await peer.setLocalDescription(
         offer
       );
         console.log("[WebRTC] Set local description (offer)");
+        logPeerState("after-setLocalDescription-offer");
 
       socket.emit("offer", {
         roomId: meetingCode,
@@ -224,6 +248,7 @@ export default function MeetingRoom() {
         console.log("[WebRTC] Sent offer to peer");
       } catch (error) {
         console.error("[WebRTC] Error in handleUserJoined:", error);
+        logPeerState("error-handleUserJoined");
       }
     };
 
@@ -234,6 +259,7 @@ export default function MeetingRoom() {
     ) => {
       const peer = peerRef.current;
       console.log("[WebRTC] handleOffer received", { peer: !!peer, state: peer?.signalingState });
+      logPeerState("offer-received");
 
       if (!peer) return;
 
@@ -247,17 +273,21 @@ export default function MeetingRoom() {
         data.offer
       );
         console.log("[WebRTC] Set remote description (offer)");
+        logPeerState("after-setRemoteDescription-offer");
 
         await flushPendingIceCandidates(peer);
+        logPeerState("after-flush-candidates-offer");
 
       const answer =
         await peer.createAnswer();
         console.log("[WebRTC] Created answer");
+        logPeerState("after-createAnswer");
 
       await peer.setLocalDescription(
         answer
       );
         console.log("[WebRTC] Set local description (answer)");
+        logPeerState("after-setLocalDescription-answer");
 
       socket.emit("answer", {
         roomId: meetingCode,
@@ -266,6 +296,7 @@ export default function MeetingRoom() {
         console.log("[WebRTC] Sent answer to peer");
       } catch (error) {
         console.error("[WebRTC] Error in handleOffer:", error);
+        logPeerState("error-handleOffer");
       }
     };
 
@@ -276,6 +307,7 @@ export default function MeetingRoom() {
     ) => {
       const peer = peerRef.current;
       console.log("[WebRTC] handleAnswer received", { peer: !!peer, state: peer?.signalingState });
+      logPeerState("answer-received");
 
       if (!peer) return;
 
@@ -288,10 +320,13 @@ export default function MeetingRoom() {
         data.answer
       );
         console.log("[WebRTC] Set remote description (answer)");
+        logPeerState("after-setRemoteDescription-answer");
 
         await flushPendingIceCandidates(peer);
+        logPeerState("after-flush-candidates-answer");
       } catch (error) {
         console.error("[WebRTC] Error in handleAnswer:", error);
+        logPeerState("error-handleAnswer");
       }
     };
 
@@ -376,19 +411,26 @@ export default function MeetingRoom() {
       return;
     }
 
+    // Prevent recreating peer on re-renders
+    if (peerRef.current) {
+      console.log("[WebRTC] Peer already initialized, skipping re-creation");
+      return;
+    }
+
     const peer =
       await createPeerConnection();
 
     logPeerConnectionState(peer, "created");
 
     peerRef.current = peer;
-    console.log("[WebRTC] Peer connection created");
+    console.log("[WebRTC] Peer connection created and stored in ref");
 
     peer.ontrack = (event) => {
       console.log("[WebRTC] ontrack fired", {
         tracks: event.streams[0]?.getTracks?.().map((t) => ({ kind: t.kind, enabled: t.enabled })),
         streamId: event.streams[0]?.id,
       });
+      logPeerState("ontrack");
 
       if (remoteVideoRef.current) {
         const oldStream = remoteVideoRef.current.srcObject as MediaStream;
@@ -399,6 +441,7 @@ export default function MeetingRoom() {
 
         remoteVideoRef.current.srcObject = event.streams[0];
         console.log("[WebRTC] Remote stream attached to video element");
+        logPeerState("remote-stream-attached");
 
         const playPromise = remoteVideoRef.current.play?.();
 
@@ -447,13 +490,16 @@ export default function MeetingRoom() {
         iceConnectionState: peer.iceConnectionState,
         signalingState: peer.signalingState,
       });
+      logPeerState("connection-state-changed");
 
       if (peer.connectionState === "failed") {
         console.error("[WebRTC] Peer connection failed. ICE state:", peer.iceConnectionState);
+        logPeerState("connection-failed");
       }
 
       if (peer.connectionState === "connected") {
         console.log("[WebRTC] Peer connection established successfully");
+        logPeerState("connection-established");
       }
     };
 
@@ -462,6 +508,7 @@ export default function MeetingRoom() {
         iceConnectionState: peer.iceConnectionState,
         iceGatheringState: peer.iceGatheringState,
       });
+      logPeerState("ice-connection-state-changed");
     };
 
     stream
@@ -474,12 +521,14 @@ export default function MeetingRoom() {
         );
       });
     console.log("[WebRTC] All local tracks added");
+    logPeerState("after-addTrack");
 
     socket.emit(
       "join-room",
       meetingCode
     );
     console.log("[WebRTC] Emitted join-room to backend");
+    logPeerState("after-join-room");
   };
 
   // =========================
