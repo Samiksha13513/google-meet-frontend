@@ -1,41 +1,20 @@
-import { getIceServers } from "./ice-servers";
+import { PEER_CONNECTION_CONFIG } from "./config";
 
-export const createPeerConnection = async () => {
-  const apiUrl =
-    process.env.NEXT_PUBLIC_API_URL ||
-    process.env.NEXT_PUBLIC_SOCKET_URL ||
-    "https://google-meet-q33t.onrender.com";
+export function createPeerConnection(): RTCPeerConnection {
+  console.log("[WebRTC] Creating peer connection (STUN only, no Twilio)");
+  return new RTCPeerConnection(PEER_CONNECTION_CONFIG);
+}
 
-  const defaultTurnUrl =
-    process.env.NEXT_PUBLIC_TURN_SERVERS_ENDPOINT ||
-    `${apiUrl.replace(/\/$/, "")}/api/twilio-ice`;
-
-  const iceServers = await getIceServers(defaultTurnUrl);
-  console.log("[WebRTC] ICE servers loaded", {
-    count: iceServers.length,
-    hasTurn: iceServers.some((server) => {
-      const urls = Array.isArray(server.urls) ? server.urls : [server.urls];
-      return urls.some((url) => url.startsWith("turn:") || url.startsWith("turns:"));
-    }),
+export function logPeerConnectionState(
+  peer: RTCPeerConnection,
+  label: string
+): void {
+  console.log(`[WebRTC:${label}]`, {
+    connectionState: peer.connectionState,
+    iceConnectionState: peer.iceConnectionState,
+    iceGatheringState: peer.iceGatheringState,
+    signalingState: peer.signalingState,
+    senders: peer.getSenders().length,
+    receivers: peer.getReceivers().length,
   });
-
-  return new RTCPeerConnection({
-    iceServers,
-    iceTransportPolicy:
-      process.env.NEXT_PUBLIC_FORCE_TURN === "true" ? "relay" : "all",
-  });
-};
-
-export const logPeerConnectionState = (peer: RTCPeerConnection, label: string) => {
-  if (typeof window !== "undefined") {
-    const state = {
-      connectionState: peer.connectionState,
-      iceConnectionState: peer.iceConnectionState,
-      iceGatheringState: peer.iceGatheringState,
-      signalingState: peer.signalingState,
-      senders: peer.getSenders().length,
-      receivers: peer.getReceivers().length,
-    };
-    console.log(`[WebRTC:${label}]`, state);
-  }
-};
+}

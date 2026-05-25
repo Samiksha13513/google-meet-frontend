@@ -25,10 +25,7 @@ import { useParams, useRouter } from "next/navigation";
 import { socket } from "@/lib/socket";
 
 import { getLocalStream } from "../../webrtc/media";
-import {
-  createPeerConnection,
-  logPeerConnectionState,
-} from "../../webrtc/peer";
+import { MeetingPeerSession } from "../../webrtc/meeting-session";
 
 import { getMeetingByCode } from "@/lib/api";
 
@@ -118,32 +115,14 @@ export default function MeetingRoom() {
   const localStreamRef =
     useRef<MediaStream | null>(null);
 
-  const isInitializingRef =
-    useRef(false);
-
-  const peerRef =
-    useRef<RTCPeerConnection | null>(null);
+  const sessionRef =
+    useRef<MeetingPeerSession | null>(null);
 
   const localVideoRef =
     useRef<HTMLVideoElement>(null);
 
   const remoteVideoRef =
     useRef<HTMLVideoElement>(null);
-
-  const pendingCandidatesRef =
-    useRef<RTCIceCandidateInit[]>([]);
-
-  const pendingLocalIceCandidatesRef =
-    useRef<RTCIceCandidateInit[]>([]);
-
-  const hasJoinedRoomRef =
-    useRef(false);
-
-  const remotePeerIdRef =
-    useRef<string | null>(null);
-
-  const remoteStreamRef =
-    useRef<MediaStream | null>(null);
 
   const emojiRef =
     useRef<HTMLDivElement>(null);
@@ -177,98 +156,17 @@ export default function MeetingRoom() {
       remoteVideoRef.current.srcObject = null;
     }
 
-    remoteStreamRef.current = null;
-    remotePeerIdRef.current = null;
-    pendingCandidatesRef.current = [];
-    pendingLocalIceCandidatesRef.current = [];
-    hasJoinedRoomRef.current = false;
-
-    peerRef.current?.close();
-    peerRef.current = null;
-    isInitializingRef.current = false;
+    sessionRef.current?.destroy();
+    sessionRef.current = null;
   };
 
-  const flushPendingIceCandidates = async (
-    peer: RTCPeerConnection
-  ) => {
-    const candidates = [...pendingCandidatesRef.current];
-    pendingCandidatesRef.current = [];
+  const attachRemoteStream = (stream: MediaStream) => {
+    if (!remoteVideoRef.current) return;
 
-    if (!candidates.length)
-      return;
-
-    console.log(
-      "[WebRTC] Flushing pending ICE candidates count:",
-      candidates.length
-    );
-    for (const candidate of candidates) {
-      try {
-        await peer.addIceCandidate(candidate);
-        console.log(
-          "[WebRTC] Successfully flushed ICE candidate:",
-          candidate.candidate?.substring(0, 50)
-        );
-      } catch (error) {
-        console.warn(
-          "[WebRTC] Error flushing pending ICE candidate:",
-          error
-        );
-      }
-    }
-  };
-
-  const emitIceCandidate = (candidate: RTCIceCandidateInit) => {
-    if (!meetingCode) return;
-
-    const targetId = remotePeerIdRef.current;
-    if (!targetId || !hasJoinedRoomRef.current) {
-      pendingLocalIceCandidatesRef.current.push(candidate);
-      console.log(
-        "[WebRTC] Queued local ICE until room joined and peer id known",
-        { hasJoinedRoom: hasJoinedRoomRef.current, targetId }
-      );
-      return;
-    }
-
-    socket.emit("ice-candidate", {
-      roomId: meetingCode,
-      candidate,
-      targetId,
+    remoteVideoRef.current.srcObject = stream;
+    remoteVideoRef.current.play().catch((error) => {
+      console.warn("[WebRTC] Remote video play failed:", error);
     });
-  };
-
-  const flushPendingLocalIceCandidates = () => {
-    const candidates = [...pendingLocalIceCandidatesRef.current];
-    pendingLocalIceCandidatesRef.current = [];
-
-    if (!candidates.length) return;
-
-    console.log(
-      "[WebRTC] Flushing queued local ICE candidates:",
-      candidates.length
-    );
-    candidates.forEach(emitIceCandidate);
-  };
-
-  const logPeerState = (label: string) => {
-    if (!peerRef.current) {
-      console.log(`[WebRTC:${label}] Peer not initialized`);
-      return;
-    }
-    const peer = peerRef.current;
-    const state = {
-      label,
-      connectionState: peer.connectionState,
-      iceConnectionState: peer.iceConnectionState,
-      iceGatheringState: peer.iceGatheringState,
-      signalingState: peer.signalingState,
-      remoteDescriptionType: peer.remoteDescription?.type,
-      localDescriptionType: peer.localDescription?.type,
-      senders: peer.getSenders().length,
-      receivers: peer.getReceivers().length,
-      pendingCandidates: pendingCandidatesRef.current.length,
-    };
-    console.log(`[WebRTC:${label}]`, state);
   };
 
   // =========================
@@ -278,228 +176,64 @@ export default function MeetingRoom() {
   useEffect(() => {
     if (!meetingCode) return;
 
-    const createAndSendOffer = async (targetId?: string) => {
-      const peer = peerRef.current;
-      console.log("[WebRTC] createAndSendOffer", {
-        peer: !!peer,
-        targetId,
-        signalingState: peer?.signalingState,
-      });
-      logPeerState("before-createOffer");
-
-      if (!peer) return;
-      if (peer.signalingState !== "stable") {
-        console.warn("[WebRTC] Skipping offer because signaling state is not stable:", peer.signalingState);
-        return;
-      }
-
-      try {
-        const offer =
-          await peer.createOffer();
-        console.log("[WebRTC] Created offer");
-        logPeerState("after-createOffer");
-
-        await peer.setLocalDescription(
-          offer
-        );
-        console.log("[WebRTC] Set local description (offer)");
-        logPeerState("after-setLocalDescription-offer");
-
-        socket.emit("offer", {
-          roomId: meetingCode,
-          offer,
-          targetId,
-        });
-        console.log("[WebRTC] Sent offer to peer", { targetId });
-      } catch (error) {
-        console.error("[WebRTC] Error creating/sending offer:", error);
-        logPeerState("error-createAndSendOffer");
-      }
-    };
-
-    const handleExistingMembers = async (
-      data: {
-        members?: string[];
-      }
-    ) => {
-      const targetId = data.members?.[0];
-      console.log("[WebRTC] existing-members received", {
-        members: data.members,
-        targetId,
-      });
-
-      if (!targetId) return;
-      remotePeerIdRef.current = targetId;
-      flushPendingLocalIceCandidates();
-      await createAndSendOffer(targetId);
+    const handleExistingMembers = async (data: { members?: string[] }) => {
+      await sessionRef.current?.onExistingMembers(data.members ?? []);
     };
 
     const handleUserJoined = (data: { socketId?: string }) => {
       if (data.socketId) {
-        remotePeerIdRef.current = data.socketId;
-      }
-
-      console.log("[WebRTC] user-joined received", {
-        socketId: data.socketId,
-        remotePeerId: remotePeerIdRef.current,
-      });
-      logPeerState("user-joined-received");
-      flushPendingLocalIceCandidates();
-    };
-
-    const handleOffer = async (
-      data: {
-        offer: RTCSessionDescriptionInit;
-        senderId?: string;
-      }
-    ) => {
-      const peer = peerRef.current;
-      if (data.senderId) {
-        remotePeerIdRef.current = data.senderId;
-      }
-      flushPendingLocalIceCandidates();
-
-      console.log("[WebRTC] handleOffer received", {
-        peer: !!peer,
-        senderId: data.senderId,
-        state: peer?.signalingState,
-      });
-      logPeerState("offer-received");
-
-      if (!peer) return;
-
-      try {
-        if (peer.signalingState !== "stable") {
-          console.warn("[WebRTC] Unexpected signaling state for offer:", peer.signalingState);
-        }
-
-        await peer.setRemoteDescription(
-          data.offer
-        );
-        console.log("[WebRTC] Set remote description (offer)");
-        logPeerState("after-setRemoteDescription-offer");
-
-        await flushPendingIceCandidates(peer);
-        logPeerState("after-flush-candidates-offer");
-
-        const answer =
-          await peer.createAnswer();
-        console.log("[WebRTC] Created answer");
-        logPeerState("after-createAnswer");
-
-        await peer.setLocalDescription(
-          answer
-        );
-        console.log("[WebRTC] Set local description (answer)");
-        logPeerState("after-setLocalDescription-answer");
-
-        socket.emit("answer", {
-          roomId: meetingCode,
-          answer,
-          targetId: remotePeerIdRef.current,
-        });
-        console.log("[WebRTC] Sent answer to peer", { targetId: remotePeerIdRef.current });
-      } catch (error) {
-        console.error("[WebRTC] Error in handleOffer:", error);
-        logPeerState("error-handleOffer");
+        sessionRef.current?.onUserJoined(data.socketId);
       }
     };
 
-    const handleAnswer = async (
-      data: {
-        answer: RTCSessionDescriptionInit;
-        senderId?: string;
-      }
-    ) => {
-      const peer = peerRef.current;
-      if (data.senderId) {
-        remotePeerIdRef.current = data.senderId;
-      }
+    const handleOffer = async (data: {
+      offer: RTCSessionDescriptionInit;
+      senderId?: string;
+    }) => {
+      if (!data.senderId) return;
+      await sessionRef.current?.onOffer(data.offer, data.senderId);
+    };
 
-      console.log("[WebRTC] handleAnswer received", {
-        peer: !!peer,
-        senderId: data.senderId,
-        state: peer?.signalingState,
-      });
-      logPeerState("answer-received");
+    const handleAnswer = async (data: {
+      answer: RTCSessionDescriptionInit;
+      senderId?: string;
+    }) => {
+      if (!data.senderId) return;
+      await sessionRef.current?.onAnswer(data.answer, data.senderId);
+    };
 
-      if (!peer) return;
-
-      try {
-        if (peer.signalingState !== "have-local-offer") {
-          console.warn("[WebRTC] Unexpected signaling state for answer:", peer.signalingState);
-        }
-
-      await peer.setRemoteDescription(
-        data.answer
+    const handleIceCandidate = async (data: {
+      candidate: RTCIceCandidateInit;
+      senderId?: string;
+    }) => {
+      if (!data.senderId || !data.candidate) return;
+      await sessionRef.current?.onIceCandidate(
+        data.candidate,
+        data.senderId
       );
-        console.log("[WebRTC] Set remote description (answer)");
-        logPeerState("after-setRemoteDescription-answer");
-
-        await flushPendingIceCandidates(peer);
-        logPeerState("after-flush-candidates-answer");
-      } catch (error) {
-        console.error("[WebRTC] Error in handleAnswer:", error);
-        logPeerState("error-handleAnswer");
-      }
     };
 
-    const handleIceCandidate = async (
-      data: {
-        candidate: RTCIceCandidateInit;
-        senderId?: string;
-      }
-    ) => {
-      const peer = peerRef.current;
-      if (data.senderId) {
-        remotePeerIdRef.current = data.senderId;
+    const handleUserLeft = async (data: { socketId?: string }) => {
+      if (!data.socketId) return;
+
+      const leftPeerId = sessionRef.current?.getRemotePeerId();
+      if (leftPeerId && leftPeerId !== data.socketId) return;
+
+      sessionRef.current?.destroy();
+
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
       }
 
-      if (
-        !peer ||
-        !data?.candidate
-      )
-        return;
-
-      try {
-        if (peer.remoteDescription && peer.remoteDescription.type) {
-          console.log("[WebRTC] Adding ICE candidate immediately", {
-            candidate: data.candidate.candidate?.substring(0, 50),
-          });
-          await peer.addIceCandidate(data.candidate);
-          console.log("[WebRTC] ICE candidate added successfully");
-        } else {
-          pendingCandidatesRef.current.push(
-            data.candidate
-          );
-          console.log(
-            "[WebRTC] Queued ICE candidate until remote description is ready"
-          );
-        }
-      } catch (error) {
-        console.warn("[WebRTC] Error adding ICE candidate:", error);
-      }
-    };
-
-    const handleUserLeft = (data: { socketId?: string }) => {
-      console.log("[WebRTC] user-left event received from:", data.socketId);
-      if (data.socketId && data.socketId === remotePeerIdRef.current) {
-        console.log("[WebRTC] Cleaning up remote peer connection since they left");
-        remotePeerIdRef.current = null;
-        remoteStreamRef.current = null;
-        if (remoteVideoRef.current) {
-          remoteVideoRef.current.srcObject = null;
-        }
-        if (peerRef.current) {
-          peerRef.current.close();
-          peerRef.current = null;
-        }
-        isInitializingRef.current = false;
-        // Re-initialize peer connection so we are ready for another user to connect
-        if (localStreamRef.current) {
-          console.log("[WebRTC] Re-initializing meeting room to wait for new peers");
-          initializeMeeting(localStreamRef.current);
-        }
+      if (localStreamRef.current && meetingCode) {
+        const session = new MeetingPeerSession(
+          meetingCode,
+          socket,
+          localStreamRef.current,
+          { onRemoteStream: attachRemoteStream }
+        );
+        sessionRef.current = session;
+        await session.start();
       }
     };
 
@@ -561,141 +295,28 @@ export default function MeetingRoom() {
   // INITIALIZE MEETING
   // =========================
 
-  const initializeMeeting = async (
-    stream: MediaStream
-  ) => {
+  const initializeMeeting = async (stream: MediaStream) => {
     if (!meetingCode) {
-      setMeetingError(
-        "Meeting code missing"
-      );
+      setMeetingError("Meeting code missing");
       return;
     }
 
-    // Prevent recreating peer on parallel runs/re-renders
-    if (peerRef.current || isInitializingRef.current) {
-      console.log("[WebRTC] Peer already initialized or initializing, skipping re-creation");
-      return;
-    }
-    isInitializingRef.current = true;
-
-    socket.emit("join-room", { roomId: meetingCode });
-    hasJoinedRoomRef.current = true;
-    console.log("[WebRTC] Emitted join-room before peer setup");
-
-    console.log("[WebRTC] Creating new peer connection...");
-    let peer;
-    try {
-      peer = await createPeerConnection();
-    } catch (error) {
-      console.error("[WebRTC] Failed to create RTCPeerConnection:", error);
-      isInitializingRef.current = false;
+    if (sessionRef.current?.isActive()) {
+      console.log("[WebRTC] Session already active, skipping");
       return;
     }
 
-    logPeerConnectionState(peer, "created");
+    sessionRef.current?.destroy();
 
-    peerRef.current = peer;
-    console.log("[WebRTC] Peer connection created and stored in ref");
+    const session = new MeetingPeerSession(
+      meetingCode,
+      socket,
+      stream,
+      { onRemoteStream: attachRemoteStream }
+    );
 
-    peer.ontrack = (event) => {
-      const [remoteStreamFromEvent] = event.streams;
-      const remoteStream =
-        remoteStreamFromEvent ||
-        remoteStreamRef.current ||
-        new MediaStream();
-
-      if (!remoteStream.getTracks().some((track) => track.id === event.track.id)) {
-        remoteStream.addTrack(event.track);
-      }
-
-      remoteStreamRef.current = remoteStream;
-
-      console.log("[WebRTC] ontrack fired", {
-        trackKind: event.track.kind,
-        trackReadyState: event.track.readyState,
-        tracks: remoteStream.getTracks().map((t) => ({
-          kind: t.kind,
-          enabled: t.enabled,
-          readyState: t.readyState,
-        })),
-        streamId: remoteStream.id,
-      });
-      logPeerState("ontrack");
-
-      if (remoteVideoRef.current) {
-        // Force re-binding remoteStream to video element so newly added tracks are recognized
-        remoteVideoRef.current.srcObject = remoteStream;
-        console.log("[WebRTC] Remote stream attached/updated on video element");
-        logPeerState("remote-stream-attached");
-
-        remoteVideoRef.current.onloadedmetadata = () => {
-          console.log("[WebRTC] Remote video loadedmetadata fired");
-          remoteVideoRef.current?.play().catch((error) => {
-            console.warn("[WebRTC] Remote video play from metadata failed:", error);
-          });
-        };
-
-        const playPromise = remoteVideoRef.current.play?.();
-        if (playPromise) {
-          playPromise.catch((error) => {
-            console.warn("[WebRTC] Remote video play direct failed:", error);
-          });
-        }
-      } else {
-        console.warn("[WebRTC] Remote video ref not available");
-      }
-    };
-
-    peer.onicecandidate = (event) => {
-      if (event.candidate) {
-        console.log("[WebRTC] ICE candidate generated", {
-          candidate: event.candidate.candidate?.substring(0, 50),
-          sdpMLineIndex: event.candidate.sdpMLineIndex,
-        });
-        emitIceCandidate(event.candidate);
-      } else {
-        console.log("[WebRTC] ICE gathering complete");
-      }
-    };
-
-    peer.onconnectionstatechange = () => {
-      console.log("[WebRTC] Connection state changed", {
-        connectionState: peer.connectionState,
-        iceConnectionState: peer.iceConnectionState,
-        signalingState: peer.signalingState,
-      });
-      logPeerState("connection-state-changed");
-
-      if (peer.connectionState === "failed") {
-        console.error("[WebRTC] Peer connection failed. ICE state:", peer.iceConnectionState);
-        logPeerState("connection-failed");
-      }
-
-      if (peer.connectionState === "connected") {
-        console.log("[WebRTC] Peer connection established successfully");
-        logPeerState("connection-established");
-      }
-    };
-
-    peer.oniceconnectionstatechange = () => {
-      console.log("[WebRTC] ICE connection state changed", {
-        iceConnectionState: peer.iceConnectionState,
-        iceGatheringState: peer.iceGatheringState,
-      });
-      logPeerState("ice-connection-state-changed");
-    };
-
-    stream.getTracks().forEach((track) => {
-      console.log("[WebRTC] Adding local track", {
-        kind: track.kind,
-        enabled: track.enabled,
-      });
-      peer.addTrack(track, stream);
-    });
-    console.log("[WebRTC] All local tracks added");
-    logPeerState("after-addTrack");
-    flushPendingLocalIceCandidates();
-    logPeerState("after-join-room");
+    sessionRef.current = session;
+    await session.start();
   };
 
   // =========================
@@ -1335,7 +956,8 @@ export default function MeetingRoom() {
                   displayStream.getVideoTracks()[0];
 
                 const sender =
-                  peerRef.current
+                  sessionRef.current
+                    ?.getPeer()
                     ?.getSenders()
                     .find(
                       (
