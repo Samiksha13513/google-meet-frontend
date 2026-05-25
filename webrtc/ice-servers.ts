@@ -34,9 +34,26 @@
 
 export interface IceServerConfig {
   urls: string | string[];
+  url?: string | string[];
   username?: string;
   credential?: string;
   credentialType?: "password" | "oauth";
+}
+
+function normalizeIceServers(servers: IceServerConfig[]): IceServerConfig[] {
+  return servers.reduce<IceServerConfig[]>((normalized, server) => {
+    const urls = server.urls || server.url;
+    if (!urls) return normalized;
+
+    normalized.push({
+        urls,
+        username: server.username,
+        credential: server.credential,
+        credentialType: server.credentialType,
+    });
+
+    return normalized;
+  }, []);
 }
 
 /**
@@ -67,11 +84,11 @@ export async function getIceServers(
       if (response.ok) {
         const payload = await response.json();
         if (Array.isArray(payload)) {
-          return [...stunServers, ...payload];
+          return normalizeIceServers([...stunServers, ...payload]);
         }
 
         if (payload?.iceServers && Array.isArray(payload.iceServers)) {
-          return [...stunServers, ...payload.iceServers];
+          return normalizeIceServers([...stunServers, ...payload.iceServers]);
         }
 
         console.warn(

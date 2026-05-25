@@ -130,6 +130,12 @@ export default function MeetingRoom() {
   const pendingCandidatesRef =
     useRef<RTCIceCandidateInit[]>([]);
 
+  const remotePeerIdRef =
+    useRef<string | null>(null);
+
+  const remoteStreamRef =
+    useRef<MediaStream | null>(null);
+
   const emojiRef =
     useRef<HTMLDivElement>(null);
 
@@ -161,6 +167,10 @@ export default function MeetingRoom() {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
+
+    remoteStreamRef.current = null;
+    remotePeerIdRef.current = null;
+    pendingCandidatesRef.current = [];
 
     peerRef.current?.close();
     peerRef.current = null;
@@ -222,78 +232,124 @@ export default function MeetingRoom() {
   useEffect(() => {
     if (!meetingCode) return;
 
-    const handleUserJoined = async () => {
+    const createAndSendOffer = async (targetId?: string) => {
       const peer = peerRef.current;
-      console.log("[WebRTC] handleUserJoined", { peer: !!peer, state: peer?.signalingState });
-      logPeerState("user-joined-received");
+      console.log("[WebRTC] createAndSendOffer", {
+        peer: !!peer,
+        targetId,
+        signalingState: peer?.signalingState,
+      });
+      logPeerState("before-createOffer");
 
       if (!peer) return;
+      if (peer.signalingState !== "stable") {
+        console.warn("[WebRTC] Skipping offer because signaling state is not stable:", peer.signalingState);
+        return;
+      }
 
       try {
-      const offer =
-        await peer.createOffer();
+        const offer =
+          await peer.createOffer();
         console.log("[WebRTC] Created offer");
         logPeerState("after-createOffer");
 
-      await peer.setLocalDescription(
-        offer
-      );
+        await peer.setLocalDescription(
+          offer
+        );
         console.log("[WebRTC] Set local description (offer)");
         logPeerState("after-setLocalDescription-offer");
 
-      socket.emit("offer", {
-        roomId: meetingCode,
-        offer,
-      });
-        console.log("[WebRTC] Sent offer to peer");
+        socket.emit("offer", {
+          roomId: meetingCode,
+          offer,
+          targetId,
+        });
+        console.log("[WebRTC] Sent offer to peer", { targetId });
       } catch (error) {
-        console.error("[WebRTC] Error in handleUserJoined:", error);
-        logPeerState("error-handleUserJoined");
+        console.error("[WebRTC] Error creating/sending offer:", error);
+        logPeerState("error-createAndSendOffer");
       }
+    };
+
+    const handleExistingMembers = async (
+      data: {
+        members?: string[];
+      }
+    ) => {
+      const targetId = data.members?.[0];
+      console.log("[WebRTC] existing-members received", {
+        members: data.members,
+        targetId,
+      });
+
+      if (!targetId) return;
+      remotePeerIdRef.current = targetId;
+      await createAndSendOffer(targetId);
+    };
+
+    const handleUserJoined = (data: { socketId?: string }) => {
+      if (data.socketId) {
+        remotePeerIdRef.current = data.socketId;
+      }
+
+      console.log("[WebRTC] user-joined received", {
+        socketId: data.socketId,
+        remotePeerId: remotePeerIdRef.current,
+      });
+      logPeerState("user-joined-received");
     };
 
     const handleOffer = async (
       data: {
         offer: RTCSessionDescriptionInit;
+        senderId?: string;
       }
     ) => {
       const peer = peerRef.current;
-      console.log("[WebRTC] handleOffer received", { peer: !!peer, state: peer?.signalingState });
+      if (data.senderId) {
+        remotePeerIdRef.current = data.senderId;
+      }
+
+      console.log("[WebRTC] handleOffer received", {
+        peer: !!peer,
+        senderId: data.senderId,
+        state: peer?.signalingState,
+      });
       logPeerState("offer-received");
 
       if (!peer) return;
 
       try {
-        // Only set remote description if we haven't already
-        if (peer.signalingState !== "stable" && peer.signalingState !== "have-remote-offer") {
+        if (peer.signalingState !== "stable") {
           console.warn("[WebRTC] Unexpected signaling state for offer:", peer.signalingState);
         }
 
-      await peer.setRemoteDescription(
-        data.offer
-      );
+        await peer.setRemoteDescription(
+          data.offer
+        );
         console.log("[WebRTC] Set remote description (offer)");
         logPeerState("after-setRemoteDescription-offer");
 
         await flushPendingIceCandidates(peer);
         logPeerState("after-flush-candidates-offer");
 
-      const answer =
-        await peer.createAnswer();
+        const answer =
+          await peer.createAnswer();
         console.log("[WebRTC] Created answer");
         logPeerState("after-createAnswer");
 
-      await peer.setLocalDescription(
-        answer
-      );
+        await peer.setLocalDescription(
+          answer
+        );
         console.log("[WebRTC] Set local description (answer)");
         logPeerState("after-setLocalDescription-answer");
 
-      socket.emit("answer", {
-        roomId: meetingCode,
-        answer,
-      });
-        console.log("[WebRTC] Sent answer to peer");
+        socket.emit("answer", {
+          roomId: meetingCode,
+          answer,
+          targetId: remotePeerIdRef.current,
+        });
+        console.log("[WebRTC] Sent answer to peer", { targetId: remotePeerIdRef.current });
       } catch (error) {
         console.error("[WebRTC] Error in handleOffer:", error);
         logPeerState("error-handleOffer");
@@ -303,10 +359,19 @@ export default function MeetingRoom() {
     const handleAnswer = async (
       data: {
         answer: RTCSessionDescriptionInit;
+        senderId?: string;
       }
     ) => {
       const peer = peerRef.current;
-      console.log("[WebRTC] handleAnswer received", { peer: !!peer, state: peer?.signalingState });
+      if (data.senderId) {
+        remotePeerIdRef.current = data.senderId;
+      }
+
+      console.log("[WebRTC] handleAnswer received", {
+        peer: !!peer,
+        senderId: data.senderId,
+        state: peer?.signalingState,
+      });
       logPeerState("answer-received");
 
       if (!peer) return;
@@ -333,9 +398,13 @@ export default function MeetingRoom() {
     const handleIceCandidate = async (
       data: {
         candidate: RTCIceCandidateInit;
+        senderId?: string;
       }
     ) => {
       const peer = peerRef.current;
+      if (data.senderId) {
+        remotePeerIdRef.current = data.senderId;
+      }
 
       if (
         !peer ||
@@ -364,6 +433,11 @@ export default function MeetingRoom() {
     };
 
     socket.on(
+      "existing-members",
+      handleExistingMembers
+    );
+
+    socket.on(
       "user-joined",
       handleUserJoined
     );
@@ -378,6 +452,11 @@ export default function MeetingRoom() {
     );
 
     return () => {
+      socket.off(
+        "existing-members",
+        handleExistingMembers
+      );
+
       socket.off(
         "user-joined",
         handleUserJoined
@@ -426,36 +505,46 @@ export default function MeetingRoom() {
     console.log("[WebRTC] Peer connection created and stored in ref");
 
     peer.ontrack = (event) => {
+      const [remoteStreamFromEvent] = event.streams;
+      const remoteStream =
+        remoteStreamFromEvent ||
+        remoteStreamRef.current ||
+        new MediaStream();
+
+      if (!remoteStream.getTracks().some((track) => track.id === event.track.id)) {
+        remoteStream.addTrack(event.track);
+      }
+
+      remoteStreamRef.current = remoteStream;
+
       console.log("[WebRTC] ontrack fired", {
-        tracks: event.streams[0]?.getTracks?.().map((t) => ({ kind: t.kind, enabled: t.enabled })),
-        streamId: event.streams[0]?.id,
+        trackKind: event.track.kind,
+        trackReadyState: event.track.readyState,
+        tracks: remoteStream.getTracks().map((t) => ({
+          kind: t.kind,
+          enabled: t.enabled,
+          readyState: t.readyState,
+        })),
+        streamId: remoteStream.id,
       });
       logPeerState("ontrack");
 
       if (remoteVideoRef.current) {
         const oldStream = remoteVideoRef.current.srcObject as MediaStream;
-        if (oldStream?.id === event.streams[0]?.id) {
+        if (oldStream?.id === remoteStream.id) {
           console.log("[WebRTC] Remote stream already set, skipping");
           return;
         }
 
-        remoteVideoRef.current.srcObject = event.streams[0];
+        remoteVideoRef.current.srcObject = remoteStream;
         console.log("[WebRTC] Remote stream attached to video element");
         logPeerState("remote-stream-attached");
 
         const playPromise = remoteVideoRef.current.play?.();
 
         if (playPromise) {
-          playPromise.catch(() => {
-            try {
-              console.log("[WebRTC] Autoplay blocked, muting and retrying");
-              remoteVideoRef.current!.muted = true;
-              remoteVideoRef.current!.play?.().catch(() => {
-                console.warn("[WebRTC] Failed to play remote video even with mute");
-              });
-            } catch (e) {
-              console.error("[WebRTC] Error playing remote video:", e);
-            }
+          playPromise.catch((error) => {
+            console.warn("[WebRTC] Remote video autoplay/play failed:", error);
           });
         }
       } else {
@@ -477,6 +566,7 @@ export default function MeetingRoom() {
             roomId: meetingCode,
             candidate:
               event.candidate,
+            targetId: remotePeerIdRef.current,
           }
         );
       } else {
@@ -525,7 +615,7 @@ export default function MeetingRoom() {
 
     socket.emit(
       "join-room",
-      meetingCode
+      { roomId: meetingCode }
     );
     console.log("[WebRTC] Emitted join-room to backend");
     logPeerState("after-join-room");
@@ -814,7 +904,7 @@ export default function MeetingRoom() {
 
     socket.emit(
       "leave-room",
-      meetingCode
+      { roomId: meetingCode }
     );
 
     setLocalStream(null);
