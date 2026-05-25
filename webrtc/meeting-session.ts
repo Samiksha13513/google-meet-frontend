@@ -5,6 +5,7 @@ import { createPeerConnection, logPeerConnectionState } from "./peer";
 export type MeetingSessionCallbacks = {
   onRemoteStream: (stream: MediaStream) => void;
   onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
+  onParticipantLeft?: () => void;
 };
 
 type PendingSignal =
@@ -219,7 +220,6 @@ export class MeetingPeerSession {
       this.socket.emit("answer", {
         roomId: this.roomId,
         answer: peer.localDescription,
-        targetId: senderId,
       });
       console.log("[WebRTC] answer sent →", senderId);
       this.flushOutgoingIce();
@@ -328,7 +328,6 @@ export class MeetingPeerSession {
       this.socket.emit("offer", {
         roomId: this.roomId,
         offer: peer.localDescription,
-        targetId,
       });
       console.log("[WebRTC] offer sent →", targetId);
       this.flushOutgoingIce();
@@ -354,7 +353,6 @@ export class MeetingPeerSession {
     this.socket.emit("ice-candidate", {
       roomId: this.roomId,
       candidate,
-      targetId: this.remotePeerId,
     });
   }
 
@@ -368,7 +366,6 @@ export class MeetingPeerSession {
       this.socket.emit("ice-candidate", {
         roomId: this.roomId,
         candidate,
-        targetId: this.remotePeerId,
       });
     }
 

@@ -1,14 +1,22 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import Image from 'next/image';
 import { googleLogin } from "../services/auth";
 
 export default function Home() {
+  const router = useRouter();
   const [meetingCode, setMeetingCode] = useState('');
   const [showCodeInput, setShowCodeInput] = useState(false);
+
+  const goToMeeting = (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+    router.push(`/meeting/${encodeURIComponent(trimmed)}`);
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -121,8 +129,8 @@ export default function Home() {
                     value={meetingCode}
                     onChange={(e) => setMeetingCode(e.target.value)}
                     onKeyPress={(e) => {
-                      if (e.key === 'Enter' && meetingCode) {
-                        console.log('Joining meeting:', meetingCode);
+                      if (e.key === 'Enter' && meetingCode.trim()) {
+                        goToMeeting(meetingCode);
                         setMeetingCode('');
                         setShowCodeInput(false);
                       }
@@ -131,8 +139,8 @@ export default function Home() {
                   />
                   <Button
                     onClick={() => {
-                      if (meetingCode) {
-                        console.log('Joining meeting:', meetingCode);
+                      if (meetingCode.trim()) {
+                        goToMeeting(meetingCode);
                         setMeetingCode('');
                         setShowCodeInput(false);
                       }

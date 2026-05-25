@@ -46,7 +46,7 @@ export function MeetingActions() {
   }) => data?.meeting?.meetingCode || data?.meetingCode;
 
   const buildMeetingLink = (code: string) =>
-    `${window.location.origin}/meeting-room/${code}`;
+    `${window.location.origin}/meeting/${code}`;
 
   const handleCreateForLater = async () => {
     try {
@@ -79,9 +79,7 @@ export function MeetingActions() {
     console.log(data);
 
     if (code) {
-      router.push(
-        `/meeting-room/${code}`
-      );
+      router.push(`/meeting/${code}`);
     }
 
   } catch (error) {
@@ -101,7 +99,7 @@ export function MeetingActions() {
     try {
       setError("");
       await getMeetingByCode(code);
-      router.push(`/meeting-room/${encodeURIComponent(code)}`);
+      router.push(`/meeting/${encodeURIComponent(code)}`);
     } catch (error) {
       let message = "Meeting not found";
       

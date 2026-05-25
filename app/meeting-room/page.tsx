@@ -26,6 +26,8 @@ import { socket } from "@/lib/socket";
 
 import { getLocalStream } from "../../webrtc/media";
 import { MeetingPeerSession } from "../../webrtc/meeting-session";
+import { PreviewLobby } from "@/components/meeting/PreviewLobby";
+import { getDisplayName } from "@/lib/display-name";
 
 import { getMeetingByCode } from "@/lib/api";
 
@@ -41,8 +43,8 @@ const REACTIONS = [
 ];
 
 type MeetingState =
-  | "joining"
-  | "loading"
+  | "lobby"
+  | "connecting"
   | "inMeeting"
   | "ended";
 
@@ -58,7 +60,18 @@ export default function MeetingRoom() {
     : params.meetingCode;
 
   const [meetingState, setMeetingState] =
-    useState<MeetingState>("joining");
+    useState<MeetingState>("lobby");
+
+  const [displayName] = useState(() => getDisplayName());
+
+  const [participantLeftMessage, setParticipantLeftMessage] =
+    useState<string | null>(null);
+
+  const [isJoiningLive, setIsJoiningLive] =
+    useState(false);
+
+  const signalingActiveRef = useRef(false);
+  const hasJoinedLiveRef = useRef(false);
 
   const [isMicOn, setIsMicOn] =
     useState(true);
@@ -94,9 +107,6 @@ export default function MeetingRoom() {
 
   const [currentTime, setCurrentTime] =
     useState("");
-
-  const [loadingProgress, setLoadingProgress] =
-    useState(0);
 
   const [meetingError, setMeetingError] =
     useState<string | null>(null);
@@ -143,25 +153,29 @@ export default function MeetingRoom() {
   // CLEANUP
   // =========================
 
-  const cleanupMedia = () => {
-    const stream =
-      localStreamRef.current || localStream;
+  const stopPreviewTracks = () => {
+    const stream = localStreamRef.current || localStream;
+    stream?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    setLocalStream(null);
+  };
 
-    stream?.getTracks().forEach((track) => {
-      track.stop();
-    });
-
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
-
+  const cleanupLiveSession = () => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
-
     setRemoteStream(null);
+    setParticipantLeftMessage(null);
     sessionRef.current?.destroy();
     sessionRef.current = null;
+  };
+
+  const cleanupAll = () => {
+    cleanupLiveSession();
+    stopPreviewTracks();
+    if (localVideoRef.current) {
+      localVideoRef.current.srcObject = null;
+    }
   };
 
   const attachRemoteStream = (stream: MediaStream) => {
@@ -179,12 +193,18 @@ export default function MeetingRoom() {
     });
   }, [remoteStream, meetingState]);
 
-  // =========================
-  // SOCKET EVENTS
-  // =========================
+  const unregisterSignaling = () => {
+    socket.off("existing-members");
+    socket.off("user-joined");
+    socket.off("offer");
+    socket.off("answer");
+    socket.off("ice-candidate");
+    socket.off("user-left");
+    signalingActiveRef.current = false;
+  };
 
-  useEffect(() => {
-    if (!meetingCode) return;
+  const registerSignaling = () => {
+    if (!meetingCode || signalingActiveRef.current) return;
 
     const handleExistingMembers = async (data: { members?: string[] }) => {
       await sessionRef.current?.onExistingMembers(data.members ?? []);
@@ -223,93 +243,42 @@ export default function MeetingRoom() {
       );
     };
 
-    const handleUserLeft = async (data: { socketId?: string }) => {
+    const handleUserLeft = (data: { socketId?: string }) => {
       if (!data.socketId) return;
 
       const leftPeerId = sessionRef.current?.getRemotePeerId();
       if (leftPeerId && leftPeerId !== data.socketId) return;
 
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = null;
+      }
       setRemoteStream(null);
       sessionRef.current?.destroy();
-
-      if (localStreamRef.current && meetingCode) {
-        const session = new MeetingPeerSession(
-          meetingCode,
-          socket,
-          localStreamRef.current,
-          { onRemoteStream: attachRemoteStream }
-        );
-        sessionRef.current = session;
-        await session.start();
-      }
+      sessionRef.current = null;
+      setParticipantLeftMessage("Participant left the meeting");
     };
 
-    socket.on(
-      "existing-members",
-      handleExistingMembers
-    );
-
-    socket.on(
-      "user-joined",
-      handleUserJoined
-    );
-
+    socket.on("existing-members", handleExistingMembers);
+    socket.on("user-joined", handleUserJoined);
     socket.on("offer", handleOffer);
-
     socket.on("answer", handleAnswer);
+    socket.on("ice-candidate", handleIceCandidate);
+    socket.on("user-left", handleUserLeft);
 
-    socket.on(
-      "ice-candidate",
-      handleIceCandidate
-    );
-
-    socket.on(
-      "user-left",
-      handleUserLeft
-    );
-
-    return () => {
-      socket.off(
-        "existing-members",
-        handleExistingMembers
-      );
-
-      socket.off(
-        "user-joined",
-        handleUserJoined
-      );
-
-      socket.off("offer", handleOffer);
-
-      socket.off(
-        "answer",
-        handleAnswer
-      );
-
-      socket.off(
-        "ice-candidate",
-        handleIceCandidate
-      );
-
-      socket.off(
-        "user-left",
-        handleUserLeft
-      );
-    };
-  }, [meetingCode]);
+    signalingActiveRef.current = true;
+  };
 
   // =========================
   // INITIALIZE MEETING
   // =========================
 
-  const initializeMeeting = async (stream: MediaStream) => {
+  const initializeLiveMeeting = async (stream: MediaStream) => {
     if (!meetingCode) {
       setMeetingError("Meeting code missing");
       return;
     }
 
     if (sessionRef.current?.isActive()) {
-      console.log("[WebRTC] Session already active, skipping");
       return;
     }
 
@@ -320,11 +289,19 @@ export default function MeetingRoom() {
       socket,
       stream,
       {
-        onRemoteStream: attachRemoteStream,
+        onRemoteStream: (remote) => {
+          setParticipantLeftMessage(null);
+          attachRemoteStream(remote);
+        },
         onConnectionStateChange: (state) => {
-          if (state === "connected" || state === "connecting") {
+          if (state === "connected") {
             setMeetingState("inMeeting");
+            setIsJoiningLive(false);
           }
+        },
+        onParticipantLeft: () => {
+          setParticipantLeftMessage("Participant left the meeting");
+          setRemoteStream(null);
         },
       }
     );
@@ -333,57 +310,71 @@ export default function MeetingRoom() {
     await session.start();
   };
 
-  // =========================
-  // REQUEST MEDIA
-  // =========================
-
-  async function requestMedia() {
+  const startPreviewMedia = async () => {
     setPermissionRequested(true);
-
     try {
-      const stream =
-        await getLocalStream();
-
+      const stream = await getLocalStream();
+      stream.getAudioTracks().forEach((t) => {
+        t.enabled = isMicOn;
+      });
+      stream.getVideoTracks().forEach((t) => {
+        t.enabled = isCameraOn;
+      });
       setLocalStream(stream);
-
-      localStreamRef.current =
-        stream;
-
+      localStreamRef.current = stream;
       setMediaError(null);
-
-      setMeetingState("loading");
-
-      await initializeMeeting(
-        stream
-      );
     } catch (error) {
-      console.error(error);
-
       const errorMessage =
-        error instanceof Error
-          ? error.message
-          : String(error);
-
+        error instanceof Error ? error.message : String(error);
       setMediaError(
         `Unable to access camera and microphone: ${errorMessage}`
       );
     }
-  }
+  };
 
-  // =========================
-  // AUTO JOIN
-  // =========================
+  const handleJoinNow = async () => {
+    if (!meetingCode || isJoiningLive) return;
 
+    let stream = localStreamRef.current || localStream;
+    if (!stream) {
+      await startPreviewMedia();
+      stream = localStreamRef.current || localStream;
+    }
+    if (!stream) return;
+
+    setIsJoiningLive(true);
+    setMeetingState("connecting");
+    setParticipantLeftMessage(null);
+    hasJoinedLiveRef.current = true;
+
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    registerSignaling();
+
+    try {
+      await initializeLiveMeeting(stream);
+      setMeetingState("inMeeting");
+    } catch (error) {
+      console.error("[Meeting] Join failed", error);
+      setMediaError("Failed to join the meeting. Please try again.");
+      setMeetingState("lobby");
+    } finally {
+      setIsJoiningLive(false);
+    }
+  };
+
+  // Preview camera/mic in lobby only — no socket room join
   useEffect(() => {
     if (!meetingCode) return;
+    startPreviewMedia();
 
-    if (
-      meetingState !==
-      "joining"
-    )
-      return;
-
-    requestMedia();
+    return () => {
+      if (!hasJoinedLiveRef.current) {
+        stopPreviewTracks();
+      }
+    };
   }, [meetingCode]);
 
   // =========================
@@ -425,65 +416,14 @@ export default function MeetingRoom() {
     validateMeeting();
   }, [meetingCode, router]);
 
-  // =========================
-  // LOADING
-  // =========================
-
+  // Attach local preview / live stream to video element
   useEffect(() => {
-    if (
-      meetingState ===
-      "loading"
-    ) {
-      const interval =
-        setInterval(() => {
-          setLoadingProgress(
-            (prev) => {
-              if (prev >= 100) {
-                clearInterval(
-                  interval
-                );
+    const stream = localStreamRef.current || localStream;
+    const video = localVideoRef.current;
+    if (!stream || !video) return;
 
-                setMeetingState(
-                  "inMeeting"
-                );
-
-                return 100;
-              }
-
-              return prev + 4;
-            }
-          );
-        }, 100);
-
-      return () =>
-        clearInterval(interval);
-    }
-  }, [meetingState]);
-
-  // Attach local stream when the meeting room is rendered.
-  useEffect(() => {
-    const stream =
-      localStreamRef.current ||
-      localStream;
-
-    if (
-      !stream ||
-      !localVideoRef.current
-    ) {
-      return;
-    }
-
-    localVideoRef.current.srcObject = stream;
-
-    const playPromise =
-      localVideoRef.current
-        .play?.();
-
-    if (playPromise) {
-      playPromise.catch(() => {
-        // ignore autoplay playback errors
-      });
-    }
+    video.srcObject = stream;
+    video.play?.().catch(() => {});
   }, [localStream, meetingState]);
 
   // =========================
@@ -611,78 +551,47 @@ export default function MeetingRoom() {
   // END CALL
   // =========================
 
-  const handleEndCall = () => {
-    cleanupMedia();
+  const handleLeaveMeeting = () => {
+    hasJoinedLiveRef.current = false;
 
-    socket.emit(
-      "leave-room",
-      { roomId: meetingCode }
-    );
+    if (meetingCode) {
+      socket.emit("leave-room", { roomId: meetingCode });
+    }
 
-    setLocalStream(null);
-
-    localStreamRef.current =
-      null;
+    unregisterSignaling();
+    cleanupAll();
 
     setIsMicOn(true);
-
     setIsCameraOn(true);
-
     setIsScreenSharing(false);
-
+    setIsJoiningLive(false);
     setMeetingState("ended");
   };
 
-  // =========================
-  // REJOIN
-  // =========================
+  const handleReturnHome = () => {
+    router.push("/");
+  };
 
-  const handleRejoin =
-    async () => {
-      try {
-        socket.connect();
-
-        setMeetingError(null);
-
-        setMediaError(null);
-
-        setLoadingProgress(0);
-
-        await requestMedia();
-
-        setMeetingState(
-          "loading"
-        );
-      } catch (error) {
-        console.error(error);
-      }
-    };
-
-  // =========================
-  // UNMOUNT CLEANUP
-  // =========================
+  const handleRejoin = async () => {
+    hasJoinedLiveRef.current = false;
+    unregisterSignaling();
+    cleanupLiveSession();
+    setMeetingError(null);
+    setMediaError(null);
+    setParticipantLeftMessage(null);
+    setMeetingState("lobby");
+    await startPreviewMedia();
+  };
 
   useEffect(() => {
     return () => {
-      cleanupMedia();
-
-      socket.off(
-        "user-joined"
-      );
-
-      socket.off("offer");
-
-      socket.off("answer");
-
-      socket.off(
-        "ice-candidate"
-      );
-
-      socket.off(
-        "user-left"
-      );
+      if (meetingCode) {
+        socket.emit("leave-room", { roomId: meetingCode });
+      }
+      unregisterSignaling();
+      cleanupAll();
     };
-  }, []);
+  }, [meetingCode]);
 
   // =========================
   // ERROR SCREEN
@@ -702,55 +611,49 @@ export default function MeetingRoom() {
     );
   }
 
-  // =========================
-  // JOINING
-  // =========================
-
-  if (
-    meetingState ===
-    "joining"
-  ) {
+  if (meetingState === "lobby") {
     return (
-      <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center">
-        <h1 className="text-2xl">
-          Joining...
-        </h1>
-
-        <button
-          onClick={
-            requestMedia
-          }
-          className="mt-6 px-6 py-3 bg-[#8ab4f8] text-black rounded-full"
-        >
-          Allow camera &
-          mic
-        </button>
-
-        {permissionRequested &&
-          mediaError && (
-            <p className="mt-4 text-red-400">
-              {mediaError}
-            </p>
-          )}
-      </div>
+      <PreviewLobby
+        meetingCode={meetingCode ?? ""}
+        displayName={displayName}
+        videoRef={localVideoRef}
+        isMicOn={isMicOn}
+        isCameraOn={isCameraOn}
+        isJoining={isJoiningLive}
+        mediaError={mediaError}
+        onToggleMic={() => {
+          const next = !isMicOn;
+          (localStreamRef.current || localStream)
+            ?.getAudioTracks()
+            .forEach((t) => {
+              t.enabled = next;
+            });
+          setIsMicOn(next);
+        }}
+        onToggleCamera={() => {
+          const next = !isCameraOn;
+          (localStreamRef.current || localStream)
+            ?.getVideoTracks()
+            .forEach((t) => {
+              t.enabled = next;
+            });
+          setIsCameraOn(next);
+        }}
+        onJoinNow={handleJoinNow}
+      />
     );
   }
 
-  // =========================
-  // LOADING
-  // =========================
-
-  if (meetingState === "loading") {
+  if (meetingState === "connecting") {
     return (
       <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center">
         <div className="w-48 h-1 bg-[#3c4043] rounded-full overflow-hidden">
           <div
-            className="h-full bg-[#8ab4f8]"
-            style={{ width: `${loadingProgress}%` }}
+            className="h-full bg-[#8ab4f8] animate-pulse"
+            style={{ width: "70%" }}
           />
         </div>
-        <p className="mt-4">Connecting...</p>
-        {/* Keep video elements mounted so ontrack can attach during WebRTC setup */}
+        <p className="mt-4">Joining meeting...</p>
         <div className="sr-only" aria-hidden>
           <video ref={localVideoRef} autoPlay muted playsInline />
           <video ref={remoteVideoRef} autoPlay playsInline />
@@ -763,25 +666,27 @@ export default function MeetingRoom() {
   // ENDED
   // =========================
 
-  if (
-    meetingState ===
-    "ended"
-  ) {
-    return (
-      <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center">
-        <h1 className="text-3xl">
-          You left the
-          meeting
-        </h1>
+  if (meetingState === "ended") {
+    hasJoinedLiveRef.current = false;
 
-        <button
-          onClick={
-            handleRejoin
-          }
-          className="mt-6 px-6 py-3 bg-[#8ab4f8] text-black rounded-full"
-        >
-          Rejoin
-        </button>
+    return (
+      <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center gap-4">
+        <h1 className="text-3xl font-normal">You left the meeting</h1>
+        <p className="text-white/60 text-sm">Meeting code: {meetingCode}</p>
+        <div className="flex gap-3 mt-2">
+          <button
+            onClick={handleRejoin}
+            className="px-6 py-3 bg-[#3c4043] hover:bg-[#5f6368] rounded-full text-sm"
+          >
+            Rejoin
+          </button>
+          <button
+            onClick={handleReturnHome}
+            className="px-6 py-3 bg-[#8ab4f8] text-[#202124] rounded-full text-sm font-medium"
+          >
+            Return to home
+          </button>
+        </div>
       </div>
     );
   }
@@ -799,54 +704,50 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      <div className="flex-1 p-2 overflow-hidden">
-        {/* <div className="relative w-full h-full rounded-2xl overflow-hidden bg-black"> */}
-        <div className="relative w-full h-[calc(100vh-96px)] rounded-2xl overflow-hidden bg-black">
-      {/* Main Video */}
-          {/* Local Video */}
-          <video
-            ref={
-              localVideoRef
-            }
-            autoPlay
-            muted
-            playsInline
-            className={`w-full h-full object-cover ${
-              isCameraOn
-                ? "block"
-                : "hidden"
-            }`}
-          />
+      {participantLeftMessage && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-[#3c4043] px-4 py-2 rounded-lg text-sm text-[#e8eaed] shadow-lg">
+          {participantLeftMessage}
+        </div>
+      )}
 
-          {/* Avatar */}
-          {!isCameraOn && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="h-28 w-28 rounded-full bg-pink-600 flex items-center justify-center text-5xl">
-                S
-              </div>
+      <div className="flex-1 p-2 overflow-hidden">
+        <div className="relative w-full h-[calc(100vh-96px)] rounded-2xl overflow-hidden bg-black">
+          {remoteStream ? (
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-white/50">
+              {participantLeftMessage
+                ? "Waiting for others to join"
+                : "Connecting to participant..."}
             </div>
           )}
 
-          {/* Remote Video */}
-          <video
-            ref={
-              remoteVideoRef
-            }
-            autoPlay
-            playsInline
-            muted={false}
-            className="absolute bottom-4 right-4 w-72 h-44 rounded-xl object-cover bg-black border border-white/10"
-          />
-
-          {/* User */}
-          <div className="absolute bottom-4 left-4 flex items-center gap-2">
-            <span>
-              samiksha yadav
-            </span>
-
-            {!isMicOn && (
-              <MicOff className="h-4 w-4 text-red-400" />
+          <div className="absolute bottom-4 right-4 w-48 sm:w-72 h-32 sm:h-44 rounded-xl overflow-hidden border-2 border-white/20 shadow-lg bg-[#3c4043]">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className={`w-full h-full object-cover ${
+                isCameraOn ? "block" : "hidden"
+              }`}
+            />
+            {!isCameraOn && (
+              <div className="absolute inset-0 flex items-center justify-center bg-[#3c4043]">
+                <div className="h-14 w-14 rounded-full bg-[#8ab4f8] flex items-center justify-center text-xl text-[#202124] font-medium">
+                  {displayName.charAt(0).toUpperCase()}
+                </div>
+              </div>
             )}
+            <div className="absolute bottom-2 left-2 text-xs flex items-center gap-1 bg-black/50 px-2 py-0.5 rounded">
+              <span>{displayName}</span>
+              {!isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
+            </div>
           </div>
         </div>
       </div>
@@ -1099,10 +1000,9 @@ export default function MeetingRoom() {
 
           {/* END */}
           <button
-            onClick={
-              handleEndCall
-            }
+            onClick={handleLeaveMeeting}
             className="h-12 px-6 rounded-full bg-red-500 flex items-center justify-center"
+            title="Leave meeting"
           >
             <Phone className="rotate-135" />
           </button>
