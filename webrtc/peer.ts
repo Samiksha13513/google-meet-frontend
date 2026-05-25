@@ -4,11 +4,11 @@ export const createPeerConnection = async () => {
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL ||
     process.env.NEXT_PUBLIC_SOCKET_URL ||
-    (typeof window !== "undefined" ? window.location.origin : undefined);
+    "https://google-meet-q33t.onrender.com";
 
   const defaultTurnUrl =
     process.env.NEXT_PUBLIC_TURN_SERVERS_ENDPOINT ||
-    (apiUrl ? `${apiUrl.replace(/\/$/, "")}/api/twilio-ice` : undefined);
+    `${apiUrl.replace(/\/$/, "")}/api/twilio-ice`;
 
   const iceServers = await getIceServers(defaultTurnUrl);
   console.log("[WebRTC] ICE servers loaded", {

@@ -118,6 +118,9 @@ export default function MeetingRoom() {
   const localStreamRef =
     useRef<MediaStream | null>(null);
 
+  const isInitializingRef =
+    useRef(false);
+
   const peerRef =
     useRef<RTCPeerConnection | null>(null);
 
@@ -174,25 +177,28 @@ export default function MeetingRoom() {
 
     peerRef.current?.close();
     peerRef.current = null;
+    isInitializingRef.current = false;
   };
 
   const flushPendingIceCandidates = async (
     peer: RTCPeerConnection
   ) => {
-    const candidates =
-      pendingCandidatesRef.current;
+    const candidates = [...pendingCandidatesRef.current];
+    pendingCandidatesRef.current = [];
+
     if (!candidates.length)
       return;
 
     console.log(
-      "[WebRTC] Flushing pending ICE candidates",
+      "[WebRTC] Flushing pending ICE candidates count:",
       candidates.length
     );
     for (const candidate of candidates) {
       try {
         await peer.addIceCandidate(candidate);
         console.log(
-          "[WebRTC] Flushed pending ICE candidate"
+          "[WebRTC] Successfully flushed ICE candidate:",
+          candidate.candidate?.substring(0, 50)
         );
       } catch (error) {
         console.warn(
@@ -201,7 +207,6 @@ export default function MeetingRoom() {
         );
       }
     }
-    pendingCandidatesRef.current = [];
   };
 
   const logPeerState = (label: string) => {
@@ -432,6 +437,28 @@ export default function MeetingRoom() {
       }
     };
 
+    const handleUserLeft = (data: { socketId?: string }) => {
+      console.log("[WebRTC] user-left event received from:", data.socketId);
+      if (data.socketId && data.socketId === remotePeerIdRef.current) {
+        console.log("[WebRTC] Cleaning up remote peer connection since they left");
+        remotePeerIdRef.current = null;
+        remoteStreamRef.current = null;
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = null;
+        }
+        if (peerRef.current) {
+          peerRef.current.close();
+          peerRef.current = null;
+        }
+        isInitializingRef.current = false;
+        // Re-initialize peer connection so we are ready for another user to connect
+        if (localStreamRef.current) {
+          console.log("[WebRTC] Re-initializing meeting room to wait for new peers");
+          initializeMeeting(localStreamRef.current);
+        }
+      }
+    };
+
     socket.on(
       "existing-members",
       handleExistingMembers
@@ -449,6 +476,11 @@ export default function MeetingRoom() {
     socket.on(
       "ice-candidate",
       handleIceCandidate
+    );
+
+    socket.on(
+      "user-left",
+      handleUserLeft
     );
 
     return () => {
@@ -473,6 +505,11 @@ export default function MeetingRoom() {
         "ice-candidate",
         handleIceCandidate
       );
+
+      socket.off(
+        "user-left",
+        handleUserLeft
+      );
     };
   }, [meetingCode]);
 
@@ -490,14 +527,22 @@ export default function MeetingRoom() {
       return;
     }
 
-    // Prevent recreating peer on re-renders
-    if (peerRef.current) {
-      console.log("[WebRTC] Peer already initialized, skipping re-creation");
+    // Prevent recreating peer on parallel runs/re-renders
+    if (peerRef.current || isInitializingRef.current) {
+      console.log("[WebRTC] Peer already initialized or initializing, skipping re-creation");
       return;
     }
+    isInitializingRef.current = true;
 
-    const peer =
-      await createPeerConnection();
+    console.log("[WebRTC] Creating new peer connection...");
+    let peer;
+    try {
+      peer = await createPeerConnection();
+    } catch (error) {
+      console.error("[WebRTC] Failed to create RTCPeerConnection:", error);
+      isInitializingRef.current = false;
+      return;
+    }
 
     logPeerConnectionState(peer, "created");
 
@@ -530,21 +575,22 @@ export default function MeetingRoom() {
       logPeerState("ontrack");
 
       if (remoteVideoRef.current) {
-        const oldStream = remoteVideoRef.current.srcObject as MediaStream;
-        if (oldStream?.id === remoteStream.id) {
-          console.log("[WebRTC] Remote stream already set, skipping");
-          return;
-        }
-
+        // Force re-binding remoteStream to video element so newly added tracks are recognized
         remoteVideoRef.current.srcObject = remoteStream;
-        console.log("[WebRTC] Remote stream attached to video element");
+        console.log("[WebRTC] Remote stream attached/updated on video element");
         logPeerState("remote-stream-attached");
 
-        const playPromise = remoteVideoRef.current.play?.();
+        remoteVideoRef.current.onloadedmetadata = () => {
+          console.log("[WebRTC] Remote video loadedmetadata fired");
+          remoteVideoRef.current?.play().catch((error) => {
+            console.warn("[WebRTC] Remote video play from metadata failed:", error);
+          });
+        };
 
+        const playPromise = remoteVideoRef.current.play?.();
         if (playPromise) {
           playPromise.catch((error) => {
-            console.warn("[WebRTC] Remote video autoplay/play failed:", error);
+            console.warn("[WebRTC] Remote video play direct failed:", error);
           });
         }
       } else {
@@ -964,6 +1010,10 @@ export default function MeetingRoom() {
 
       socket.off(
         "ice-candidate"
+      );
+
+      socket.off(
+        "user-left"
       );
     };
   }, []);
