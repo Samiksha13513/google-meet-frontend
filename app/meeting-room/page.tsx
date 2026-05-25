@@ -133,6 +133,12 @@ export default function MeetingRoom() {
   const pendingCandidatesRef =
     useRef<RTCIceCandidateInit[]>([]);
 
+  const pendingLocalIceCandidatesRef =
+    useRef<RTCIceCandidateInit[]>([]);
+
+  const hasJoinedRoomRef =
+    useRef(false);
+
   const remotePeerIdRef =
     useRef<string | null>(null);
 
@@ -174,6 +180,8 @@ export default function MeetingRoom() {
     remoteStreamRef.current = null;
     remotePeerIdRef.current = null;
     pendingCandidatesRef.current = [];
+    pendingLocalIceCandidatesRef.current = [];
+    hasJoinedRoomRef.current = false;
 
     peerRef.current?.close();
     peerRef.current = null;
@@ -207,6 +215,39 @@ export default function MeetingRoom() {
         );
       }
     }
+  };
+
+  const emitIceCandidate = (candidate: RTCIceCandidateInit) => {
+    if (!meetingCode) return;
+
+    const targetId = remotePeerIdRef.current;
+    if (!targetId || !hasJoinedRoomRef.current) {
+      pendingLocalIceCandidatesRef.current.push(candidate);
+      console.log(
+        "[WebRTC] Queued local ICE until room joined and peer id known",
+        { hasJoinedRoom: hasJoinedRoomRef.current, targetId }
+      );
+      return;
+    }
+
+    socket.emit("ice-candidate", {
+      roomId: meetingCode,
+      candidate,
+      targetId,
+    });
+  };
+
+  const flushPendingLocalIceCandidates = () => {
+    const candidates = [...pendingLocalIceCandidatesRef.current];
+    pendingLocalIceCandidatesRef.current = [];
+
+    if (!candidates.length) return;
+
+    console.log(
+      "[WebRTC] Flushing queued local ICE candidates:",
+      candidates.length
+    );
+    candidates.forEach(emitIceCandidate);
   };
 
   const logPeerState = (label: string) => {
@@ -289,6 +330,7 @@ export default function MeetingRoom() {
 
       if (!targetId) return;
       remotePeerIdRef.current = targetId;
+      flushPendingLocalIceCandidates();
       await createAndSendOffer(targetId);
     };
 
@@ -302,6 +344,7 @@ export default function MeetingRoom() {
         remotePeerId: remotePeerIdRef.current,
       });
       logPeerState("user-joined-received");
+      flushPendingLocalIceCandidates();
     };
 
     const handleOffer = async (
@@ -314,6 +357,7 @@ export default function MeetingRoom() {
       if (data.senderId) {
         remotePeerIdRef.current = data.senderId;
       }
+      flushPendingLocalIceCandidates();
 
       console.log("[WebRTC] handleOffer received", {
         peer: !!peer,
@@ -534,6 +578,10 @@ export default function MeetingRoom() {
     }
     isInitializingRef.current = true;
 
+    socket.emit("join-room", { roomId: meetingCode });
+    hasJoinedRoomRef.current = true;
+    console.log("[WebRTC] Emitted join-room before peer setup");
+
     console.log("[WebRTC] Creating new peer connection...");
     let peer;
     try {
@@ -598,23 +646,13 @@ export default function MeetingRoom() {
       }
     };
 
-    peer.onicecandidate = (
-      event
-    ) => {
+    peer.onicecandidate = (event) => {
       if (event.candidate) {
         console.log("[WebRTC] ICE candidate generated", {
           candidate: event.candidate.candidate?.substring(0, 50),
           sdpMLineIndex: event.candidate.sdpMLineIndex,
         });
-        socket.emit(
-          "ice-candidate",
-          {
-            roomId: meetingCode,
-            candidate:
-              event.candidate,
-            targetId: remotePeerIdRef.current,
-          }
-        );
+        emitIceCandidate(event.candidate);
       } else {
         console.log("[WebRTC] ICE gathering complete");
       }
@@ -647,23 +685,16 @@ export default function MeetingRoom() {
       logPeerState("ice-connection-state-changed");
     };
 
-    stream
-      .getTracks()
-      .forEach((track) => {
-        console.log("[WebRTC] Adding local track", { kind: track.kind, enabled: track.enabled });
-        peer.addTrack(
-          track,
-          stream
-        );
+    stream.getTracks().forEach((track) => {
+      console.log("[WebRTC] Adding local track", {
+        kind: track.kind,
+        enabled: track.enabled,
       });
+      peer.addTrack(track, stream);
+    });
     console.log("[WebRTC] All local tracks added");
     logPeerState("after-addTrack");
-
-    socket.emit(
-      "join-room",
-      { roomId: meetingCode }
-    );
-    console.log("[WebRTC] Emitted join-room to backend");
+    flushPendingLocalIceCandidates();
     logPeerState("after-join-room");
   };
 
