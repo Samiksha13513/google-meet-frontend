@@ -112,6 +112,9 @@ export default function MeetingRoom() {
   const [localStream, setLocalStream] =
     useState<MediaStream | null>(null);
 
+  const [remoteStream, setRemoteStream] =
+    useState<MediaStream | null>(null);
+
   const localStreamRef =
     useRef<MediaStream | null>(null);
 
@@ -156,18 +159,25 @@ export default function MeetingRoom() {
       remoteVideoRef.current.srcObject = null;
     }
 
+    setRemoteStream(null);
     sessionRef.current?.destroy();
     sessionRef.current = null;
   };
 
   const attachRemoteStream = (stream: MediaStream) => {
-    if (!remoteVideoRef.current) return;
+    setRemoteStream(stream);
+  };
 
-    remoteVideoRef.current.srcObject = stream;
-    remoteVideoRef.current.play().catch((error) => {
+  // Bind remote stream whenever the video element mounts or stream updates
+  useEffect(() => {
+    const video = remoteVideoRef.current;
+    if (!video || !remoteStream) return;
+
+    video.srcObject = remoteStream;
+    video.play().catch((error) => {
       console.warn("[WebRTC] Remote video play failed:", error);
     });
-  };
+  }, [remoteStream, meetingState]);
 
   // =========================
   // SOCKET EVENTS
@@ -219,11 +229,8 @@ export default function MeetingRoom() {
       const leftPeerId = sessionRef.current?.getRemotePeerId();
       if (leftPeerId && leftPeerId !== data.socketId) return;
 
+      setRemoteStream(null);
       sessionRef.current?.destroy();
-
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
-      }
 
       if (localStreamRef.current && meetingCode) {
         const session = new MeetingPeerSession(
@@ -312,7 +319,14 @@ export default function MeetingRoom() {
       meetingCode,
       socket,
       stream,
-      { onRemoteStream: attachRemoteStream }
+      {
+        onRemoteStream: attachRemoteStream,
+        onConnectionStateChange: (state) => {
+          if (state === "connected" || state === "connecting") {
+            setMeetingState("inMeeting");
+          }
+        },
+      }
     );
 
     sessionRef.current = session;
@@ -726,24 +740,21 @@ export default function MeetingRoom() {
   // LOADING
   // =========================
 
-  if (
-    meetingState ===
-    "loading"
-  ) {
+  if (meetingState === "loading") {
     return (
       <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center">
         <div className="w-48 h-1 bg-[#3c4043] rounded-full overflow-hidden">
           <div
             className="h-full bg-[#8ab4f8]"
-            style={{
-              width: `${loadingProgress}%`,
-            }}
+            style={{ width: `${loadingProgress}%` }}
           />
         </div>
-
-        <p className="mt-4">
-          Loading...
-        </p>
+        <p className="mt-4">Connecting...</p>
+        {/* Keep video elements mounted so ontrack can attach during WebRTC setup */}
+        <div className="sr-only" aria-hidden>
+          <video ref={localVideoRef} autoPlay muted playsInline />
+          <video ref={remoteVideoRef} autoPlay playsInline />
+        </div>
       </div>
     );
   }
