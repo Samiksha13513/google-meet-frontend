@@ -351,18 +351,20 @@ export default function MeetingRoom() {
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
         
-        // Add existing members
+        // Add existing members, excluding current user
         setParticipants(
-          members.map((m) => ({
-            socketId: m.socketId,
-            displayName: getIdentityLabel(m),
-            email: m.email,
-            image: m.image,
-            isMicOn: m.isMicOn,
-            isCameraOn: m.isCameraOn,
-            isHost: m.isHost,
-            isScreenSharing: m.isScreenSharing || false,
-          }))
+          members
+            .filter((m) => m.socketId !== socket.id)
+            .map((m) => ({
+              socketId: m.socketId,
+              displayName: getIdentityLabel(m),
+              email: m.email,
+              image: m.image,
+              isMicOn: m.isMicOn,
+              isCameraOn: m.isCameraOn,
+              isHost: m.isHost,
+              isScreenSharing: m.isScreenSharing || false,
+            }))
         );
       },
       onJoinDenied: (reason) => {
@@ -370,6 +372,11 @@ export default function MeetingRoom() {
         setMeetingState("denied");
       },
       onRemoteStreamAdded: (socketId, remoteStream, remoteName, remoteDetails) => {
+        // Prevent adding self as remote participant
+        if (socketId === socket.id) {
+          console.warn("[Meeting] Ignoring self stream added event");
+          return;
+        }
         setParticipants((prev) => {
           const exists = prev.find((p) => p.socketId === socketId);
           if (exists) {
@@ -448,6 +455,11 @@ export default function MeetingRoom() {
         });
       },
       onParticipantJoined: (member) => {
+        // Prevent adding self as remote participant
+        if (member.socketId === socket.id) {
+          console.warn("[Meeting] Ignoring self participant joined event");
+          return;
+        }
         setParticipants((prev) => {
           if (prev.some((p) => p.socketId === member.socketId)) {
             return prev.map((p) =>
@@ -501,9 +513,8 @@ export default function MeetingRoom() {
         setMessages((prev) => [...prev, data]);
       },
       onEmojiReaction: (data) => {
-        const name =
-          participants.find((p) => p.socketId === data.senderId)?.displayName ||
-          "Signed-in user";
+        const participant = participants.find((p) => p.socketId === data.senderId);
+        const name = participant?.email || participant?.displayName || displayName;
         triggerFloatingReaction(data.emoji, name);
       },
       onScreenShareStarted: (senderId) => {

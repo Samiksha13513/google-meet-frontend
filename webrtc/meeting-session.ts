@@ -374,7 +374,7 @@ export class MeetingPeerSession {
         this.remoteDisplayNames.get(data.senderId) ||
         knownDetails?.email ||
         knownDetails?.displayName ||
-        "Signed-in user";
+        `User ${String(data.senderId).slice(0, 6)}`;
       const peer = this.getOrCreatePeer(data.senderId, displayName);
 
       try {

@@ -8,11 +8,9 @@ export function getIdentityLabel(identity: {
   displayName?: string | null;
   email?: string | null;
 }): string {
-  return (
-    identity.email?.trim() ||
-    identity.displayName?.trim() ||
-    "Signed-in user"
-  );
+  const email = identity.email?.trim();
+  const name = identity.displayName?.trim();
+  return email || name || "User";
 }
 
 function getEmailFromToken(): string | undefined {
@@ -35,14 +33,14 @@ function getEmailFromToken(): string | undefined {
 
 export function getCurrentUserIdentity(): UserIdentity {
   if (typeof window === "undefined") {
-    return { displayName: "Signed-in user" };
+    return { displayName: "User" };
   }
 
   try {
     const raw = localStorage.getItem("user");
     if (!raw) {
       const email = getEmailFromToken();
-      return { displayName: email || "Signed-in user", email };
+      return { displayName: email || "User", email };
     }
 
     const user = JSON.parse(raw) as {
@@ -55,7 +53,7 @@ export function getCurrentUserIdentity(): UserIdentity {
 
     const email = user.email?.trim() || undefined;
     const displayName =
-      user.name?.trim() || user.displayName?.trim() || email || "Signed-in user";
+      user.name?.trim() || user.displayName?.trim() || email || "User";
 
     return {
       displayName,
@@ -63,7 +61,7 @@ export function getCurrentUserIdentity(): UserIdentity {
       image: user.image || user.picture || undefined,
     };
   } catch {
-    return { displayName: "Signed-in user" };
+    return { displayName: "User" };
   }
 }
 
