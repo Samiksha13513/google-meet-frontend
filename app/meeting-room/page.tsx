@@ -125,7 +125,8 @@ const MeetAvatar = ({
     lg: "h-24 w-24 text-4xl",
     xl: "h-28 w-28 text-5xl",
   }[size];
-  const label = getIdentityLabel({ displayName: name, email });
+const label = email || name || "Guest";
+
 
   return (
     <div
@@ -158,6 +159,7 @@ export default function MeetingRoom() {
   // State Management
   const [meetingState, setMeetingState] = useState<MeetingState>("lobby");
   const [identity] = useState<UserIdentity>(() => getCurrentUserIdentity());
+  console.log("Current User Identity:", identity);
   const displayName = getIdentityLabel(identity);
   
   const [isMicOn, setIsMicOn] = useState(true);
@@ -353,8 +355,12 @@ export default function MeetingRoom() {
         
         // Add existing members, excluding current user
         setParticipants(
-          members
-            .filter((m) => m.socketId !== socket.id)
+        members.filter(
+  (m) =>
+    m.socketId &&
+    socket.id &&
+    m.socketId !== socket.id
+)
             .map((m) => ({
               socketId: m.socketId,
               displayName: getIdentityLabel(m),
