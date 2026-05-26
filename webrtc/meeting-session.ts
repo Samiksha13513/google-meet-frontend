@@ -1,38 +1,33 @@
 import type { Socket } from "socket.io-client";
-
-import { createPeerConnection, logPeerConnectionState } from "./peer";
+import { PEER_CONNECTION_CONFIG } from "./config";
 
 export type MeetingSessionCallbacks = {
-  onRemoteStream: (stream: MediaStream) => void;
-  onConnectionStateChange?: (state: RTCPeerConnectionState) => void;
-  onParticipantLeft?: () => void;
+  onWaitingRoom?: () => void;
+  onJoinApproved?: (members: any[], isHost: boolean) => void;
+  onJoinDenied?: (reason: string) => void;
+  onRemoteStreamAdded: (socketId: string, stream: MediaStream, displayName: string) => void;
+  onRemoteStreamRemoved: (socketId: string) => void;
+  onRemoteStatusChanged?: (socketId: string, isMicOn: boolean, isCameraOn: boolean) => void;
+  onJoinRequest?: (data: { socketId: string, displayName: string }) => void;
+  onJoinRequestCancelled?: (data: { socketId: string }) => void;
+  onHostChanged?: (data: { hostId: string, hostDetails: any }) => void;
+  onReceiveMessage?: (data: { senderId: string, senderName: string, message: string, timestamp: number }) => void;
+  onEmojiReaction?: (data: { senderId: string, emoji: string }) => void;
+  onScreenShareStarted?: (senderId: string) => void;
+  onScreenShareStopped?: (senderId: string) => void;
+  onKicked?: () => void;
 };
 
-type PendingSignal =
-  | { type: "members"; members: string[] }
-  | { type: "offer"; offer: RTCSessionDescriptionInit; senderId: string }
-  | { type: "answer"; answer: RTCSessionDescriptionInit; senderId: string }
-  | { type: "ice"; candidate: RTCIceCandidateInit; senderId: string };
-
-/**
- * 1:1 WebRTC session — Socket.IO signaling only (no Twilio).
- *
- * Flow:
- * - First user joins room and waits.
- * - Second user joins, receives existing-members, sends offer.
- * - First user receives offer, sends answer.
- * - ICE trickle both ways, ontrack delivers remote media.
- */
 export class MeetingPeerSession {
-  private peer: RTCPeerConnection | null = null;
-  private remotePeerId: string | null = null;
-  private remoteStream: MediaStream | null = null;
-  private readonly pendingRemoteIce: RTCIceCandidateInit[] = [];
-  private readonly pendingOutgoingIce: RTCIceCandidateInit[] = [];
-  private readonly pendingSignals: PendingSignal[] = [];
+  private peers = new Map<string, RTCPeerConnection>();
+  private remoteStreams = new Map<string, MediaStream>();
+  private remoteDisplayNames = new Map<string, string>();
+  private pendingRemoteIce = new Map<string, RTCIceCandidateInit[]>();
+  private iceServers: RTCIceServer[] = [];
+  
   private isStarting = false;
-  private isReady = false;
-  private makingOffer = false;
+  private isSessionActive = false;
+  private screenShareStream: MediaStream | null = null;
 
   constructor(
     private readonly roomId: string,
@@ -41,21 +36,21 @@ export class MeetingPeerSession {
     private readonly callbacks: MeetingSessionCallbacks
   ) {}
 
-  getPeer(): RTCPeerConnection | null {
-    return this.peer;
-  }
-
-  getRemotePeerId(): string | null {
-    return this.remotePeerId;
-  }
-
   isActive(): boolean {
-    return this.peer !== null;
+    return this.isSessionActive;
   }
 
-  async start(): Promise<void> {
-    if (this.peer || this.isStarting) {
-      console.log("[WebRTC] Session already active or starting");
+  getPeer(socketId: string): RTCPeerConnection | null {
+    return this.peers.get(socketId) || null;
+  }
+
+  getPeersMap(): Map<string, RTCPeerConnection> {
+    return this.peers;
+  }
+
+  async start(displayName: string): Promise<void> {
+    if (this.isSessionActive || this.isStarting) {
+      console.log("[WebRTC:Mesh] Session already active or starting");
       return;
     }
 
@@ -64,87 +59,378 @@ export class MeetingPeerSession {
     try {
       await this.waitForSocket();
 
-      const peer = createPeerConnection();
-      this.peer = peer;
-      this.bindPeerEvents(peer);
+      // Use the static configured STUN servers
+      this.iceServers = PEER_CONNECTION_CONFIG.iceServers || [{ urls: "stun:stun.l.google.com:19302" }];
 
-      for (const track of this.localStream.getTracks()) {
-        peer.addTrack(track, this.localStream);
-        console.log("[WebRTC] Added local track", track.kind);
-      }
+      // Bind dynamic signaling socket events
+      this.bindSocketEvents();
 
-      this.socket.emit("join-room", { roomId: this.roomId });
-      console.log("[WebRTC] join-room", this.roomId);
+      // Ask to join room
+      this.socket.emit("join-request", { roomId: this.roomId, displayName });
+      console.log("[WebRTC:Mesh] join-request emitted for:", displayName);
 
-      this.isReady = true;
-      await this.drainPendingSignals();
-      this.flushOutgoingIce();
+      this.isSessionActive = true;
     } finally {
       this.isStarting = false;
     }
   }
 
-  async onExistingMembers(members: string[]): Promise<void> {
-    if (!this.isReady) {
-      this.pendingSignals.push({ type: "members", members });
-      return;
+  // Add a screen sharing stream and propagate to all mesh peers
+  async startScreenShare(stream: MediaStream): Promise<void> {
+    this.screenShareStream = stream;
+
+    for (const [socketId, peer] of this.peers.entries()) {
+      try {
+        stream.getTracks().forEach((track) => {
+          peer.addTrack(track, stream);
+        });
+        await this.sendOffer(socketId);
+      } catch (err) {
+        console.error(`[WebRTC:Mesh] Error adding screen-share track for ${socketId}:`, err);
+      }
     }
-    await this.handleExistingMembers(members);
+
+    this.socket.emit("screen-share-started", { roomId: this.roomId });
   }
 
-  onUserJoined(socketId: string): void {
-    console.log("[WebRTC] user-joined", socketId);
-    this.setRemotePeerId(socketId);
-  }
+  // Stop screen sharing and notify all mesh peers
+  async stopScreenShare(): Promise<void> {
+    if (!this.screenShareStream) return;
 
-  async onOffer(
-    offer: RTCSessionDescriptionInit,
-    senderId: string
-  ): Promise<void> {
-    if (!this.isReady) {
-      this.pendingSignals.push({ type: "offer", offer, senderId });
-      return;
+    const tracks = this.screenShareStream.getTracks();
+    tracks.forEach((track) => track.stop());
+
+    for (const [socketId, peer] of this.peers.entries()) {
+      try {
+        const senders = peer.getSenders();
+        for (const sender of senders) {
+          if (sender.track && tracks.some((t) => t.id === sender.track!.id)) {
+            peer.removeTrack(sender);
+          }
+        }
+        await this.sendOffer(socketId);
+      } catch (err) {
+        console.error(`[WebRTC:Mesh] Error removing screen-share track for ${socketId}:`, err);
+      }
     }
-    await this.handleOffer(offer, senderId);
+
+    this.screenShareStream = null;
+    this.socket.emit("screen-share-stopped", { roomId: this.roomId });
   }
 
-  async onAnswer(
-    answer: RTCSessionDescriptionInit,
-    senderId: string
-  ): Promise<void> {
-    if (!this.isReady) {
-      this.pendingSignals.push({ type: "answer", answer, senderId });
-      return;
-    }
-    await this.handleAnswer(answer, senderId);
+  // Host approval and removal triggers
+  approveJoin(socketId: string): void {
+    this.socket.emit("approve-join", { roomId: this.roomId, socketId });
   }
 
-  async onIceCandidate(
-    candidate: RTCIceCandidateInit,
-    senderId: string
-  ): Promise<void> {
-    if (!this.isReady) {
-      this.pendingSignals.push({ type: "ice", candidate, senderId });
-      return;
-    }
-    await this.handleIceCandidate(candidate, senderId);
+  denyJoin(socketId: string): void {
+    this.socket.emit("deny-join", { roomId: this.roomId, socketId });
   }
 
-  onPeerLeft(socketId: string): void {
-    if (this.remotePeerId && socketId !== this.remotePeerId) return;
-    console.log("[WebRTC] Remote peer left");
-    this.closePeerOnly();
+  removeParticipant(socketId: string): void {
+    this.socket.emit("remove-participant", { roomId: this.roomId, socketId });
+  }
+
+  sendChatMessage(message: string, displayName: string): void {
+    this.socket.emit("send-message", {
+      roomId: this.roomId,
+      message,
+      senderName: displayName,
+    });
+  }
+
+  sendReaction(emoji: string): void {
+    this.socket.emit("emoji-reaction", { roomId: this.roomId, emoji });
+  }
+
+  sendStatusUpdate(isMicOn: boolean, isCameraOn: boolean): void {
+    this.socket.emit("status-update", {
+      roomId: this.roomId,
+      isMicOn,
+      isCameraOn,
+    });
   }
 
   destroy(): void {
-    this.isReady = false;
-    this.closePeerOnly();
-    this.remoteStream = null;
-    this.remotePeerId = null;
-    this.pendingRemoteIce.length = 0;
-    this.pendingOutgoingIce.length = 0;
-    this.pendingSignals.length = 0;
-    this.makingOffer = false;
+    this.isSessionActive = false;
+    this.socket.emit("leave-room", { roomId: this.roomId });
+    this.unregisterSocketEvents();
+
+    for (const [socketId] of this.peers) {
+      this.removePeer(socketId);
+    }
+
+    this.peers.clear();
+    this.remoteStreams.clear();
+    this.remoteDisplayNames.clear();
+    this.pendingRemoteIce.clear();
+    this.screenShareStream = null;
+  }
+
+  private getOrCreatePeer(socketId: string, displayName: string): RTCPeerConnection {
+    if (this.peers.has(socketId)) {
+      return this.peers.get(socketId)!;
+    }
+
+    console.log(`[WebRTC:Mesh] Creating RTCPeerConnection for peer: ${socketId} (${displayName})`);
+    const peer = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      iceTransportPolicy: process.env.NEXT_PUBLIC_FORCE_TURN === "true" ? "relay" : "all",
+    });
+
+    this.peers.set(socketId, peer);
+    this.remoteDisplayNames.set(socketId, displayName);
+
+    // Bind WebRTC track events
+    peer.ontrack = (event) => {
+      console.log(`[WebRTC:Mesh] ontrack event from ${socketId} for ${event.track.kind}`);
+      let stream = event.streams[0];
+      if (!stream) {
+        stream = this.remoteStreams.get(socketId) || new MediaStream();
+        if (!stream.getTracks().some((t) => t.id === event.track.id)) {
+          stream.addTrack(event.track);
+        }
+      }
+      this.remoteStreams.set(socketId, stream);
+      this.callbacks.onRemoteStreamAdded(socketId, stream, displayName);
+    };
+
+    // ICE trickle
+    peer.onicecandidate = (event) => {
+      if (event.candidate) {
+        this.socket.emit("ice-candidate", {
+          roomId: this.roomId,
+          candidate: event.candidate.toJSON(),
+          targetId: socketId,
+        });
+      }
+    };
+
+    // Auto cleanup failed peers
+    peer.onconnectionstatechange = () => {
+      console.log(`[WebRTC:Mesh] Connection with ${socketId} is now ${peer.connectionState}`);
+      if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+        this.removePeer(socketId);
+      }
+    };
+
+    // Add local tracks (camera / mic)
+    this.localStream.getTracks().forEach((track) => {
+      peer.addTrack(track, this.localStream);
+      console.log(`[WebRTC:Mesh] Added local track (${track.kind}) to peer ${socketId}`);
+    });
+
+    // Add screen share tracks if currently active
+    if (this.screenShareStream) {
+      this.screenShareStream.getTracks().forEach((track) => {
+        peer.addTrack(track, this.screenShareStream!);
+        console.log(`[WebRTC:Mesh] Added screen-share track (${track.kind}) to peer ${socketId}`);
+      });
+    }
+
+    return peer;
+  }
+
+  private removePeer(socketId: string): void {
+    const peer = this.peers.get(socketId);
+    if (peer) {
+      peer.close();
+      this.peers.delete(socketId);
+    }
+    this.remoteStreams.delete(socketId);
+    this.remoteDisplayNames.delete(socketId);
+    this.pendingRemoteIce.delete(socketId);
+    this.callbacks.onRemoteStreamRemoved(socketId);
+    console.log(`[WebRTC:Mesh] Removed peer and streams for: ${socketId}`);
+  }
+
+  private async sendOffer(targetId: string): Promise<void> {
+    const peer = this.peers.get(targetId);
+    if (!peer) return;
+
+    try {
+      const offer = await peer.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: true,
+      });
+      await peer.setLocalDescription(offer);
+
+      this.socket.emit("offer", {
+        roomId: this.roomId,
+        offer: peer.localDescription,
+        targetId,
+      });
+      console.log(`[WebRTC:Mesh] Offer sent to → ${targetId}`);
+    } catch (err) {
+      console.error(`[WebRTC:Mesh] Error sending offer to ${targetId}:`, err);
+    }
+  }
+
+  private bindSocketEvents(): void {
+    // 1. Waiting room / Approval events
+    this.socket.on("waiting-room", () => {
+      console.log("[WebRTC:Mesh] waiting-room event received");
+      this.callbacks.onWaitingRoom?.();
+    });
+
+    this.socket.on("join-approved", async (data: { isHost: boolean, members: any[] }) => {
+      console.log("[WebRTC:Mesh] join-approved event received. Members count:", data.members.length);
+      this.callbacks.onJoinApproved?.(data.members, data.isHost);
+
+      // We are the joiner: initiate offers to all existing members
+      for (const m of data.members) {
+        if (m.socketId !== this.socket.id) {
+          this.getOrCreatePeer(m.socketId, m.displayName);
+          await this.sendOffer(m.socketId);
+        }
+      }
+    });
+
+    this.socket.on("join-denied", (data: { reason: string }) => {
+      console.log("[WebRTC:Mesh] join-denied received:", data.reason);
+      this.callbacks.onJoinDenied?.(data.reason);
+    });
+
+    this.socket.on("removed-from-meeting", () => {
+      console.log("[WebRTC:Mesh] Kicked out from meeting by host");
+      this.callbacks.onKicked?.();
+    });
+
+    // 2. Mesh participant joins/leaves
+    this.socket.on("participant-joined", (details: any) => {
+      console.log("[WebRTC:Mesh] participant-joined event from:", details.socketId);
+      // Wait for their offer - we don't start the peer connection here to avoid simultaneous double connections
+      this.remoteDisplayNames.set(details.socketId, details.displayName);
+    });
+
+    this.socket.on("participant-left", (data: { socketId: string }) => {
+      console.log("[WebRTC:Mesh] participant-left event from:", data.socketId);
+      this.removePeer(data.socketId);
+    });
+
+    // 3. WebRTC mesh signaling
+    this.socket.on("offer", async (data: { offer: RTCSessionDescriptionInit, senderId: string }) => {
+      console.log(`[WebRTC:Mesh] Offer received from ← ${data.senderId}`);
+      const displayName = this.remoteDisplayNames.get(data.senderId) || "Participant";
+      const peer = this.getOrCreatePeer(data.senderId, displayName);
+
+      try {
+        await peer.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await this.flushRemoteIce(data.senderId);
+
+        const answer = await peer.createAnswer();
+        await peer.setLocalDescription(answer);
+
+        this.socket.emit("answer", {
+          roomId: this.roomId,
+          answer: peer.localDescription,
+          targetId: data.senderId,
+        });
+        console.log(`[WebRTC:Mesh] Answer sent back to → ${data.senderId}`);
+      } catch (err) {
+        console.error(`[WebRTC:Mesh] Error in handleOffer for ${data.senderId}:`, err);
+      }
+    });
+
+    this.socket.on("answer", async (data: { answer: RTCSessionDescriptionInit, senderId: string }) => {
+      console.log(`[WebRTC:Mesh] Answer received from ← ${data.senderId}`);
+      const peer = this.peers.get(data.senderId);
+      if (!peer) return;
+
+      try {
+        await peer.setRemoteDescription(new RTCSessionDescription(data.answer));
+        await this.flushRemoteIce(data.senderId);
+      } catch (err) {
+        console.error(`[WebRTC:Mesh] Error in handleAnswer for ${data.senderId}:`, err);
+      }
+    });
+
+    this.socket.on("ice-candidate", async (data: { candidate: RTCIceCandidateInit, senderId: string }) => {
+      const peer = this.peers.get(data.senderId);
+      if (!peer) return;
+
+      if (peer.remoteDescription?.type) {
+        try {
+          await peer.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (err) {
+          console.warn(`[WebRTC:Mesh] Failed to add ICE candidate for ${data.senderId}:`, err);
+        }
+      } else {
+        if (!this.pendingRemoteIce.has(data.senderId)) {
+          this.pendingRemoteIce.set(data.senderId, []);
+        }
+        this.pendingRemoteIce.get(data.senderId)!.push(data.candidate);
+      }
+    });
+
+    // 4. In-meeting broadcasts
+    this.socket.on("join-request", (data: { socketId: string, displayName: string }) => {
+      this.callbacks.onJoinRequest?.(data);
+    });
+
+    this.socket.on("join-request-cancelled", (data: { socketId: string }) => {
+      this.callbacks.onJoinRequestCancelled?.(data);
+    });
+
+    this.socket.on("host-changed", (data: { hostId: string, hostDetails: any }) => {
+      this.callbacks.onHostChanged?.(data);
+    });
+
+    this.socket.on("receive-message", (data: any) => {
+      this.callbacks.onReceiveMessage?.(data);
+    });
+
+    this.socket.on("emoji-reaction", (data: any) => {
+      this.callbacks.onEmojiReaction?.(data);
+    });
+
+    this.socket.on("screen-share-started", (data: { senderId: string }) => {
+      this.callbacks.onScreenShareStarted?.(data.senderId);
+    });
+
+    this.socket.on("screen-share-stopped", (data: { senderId: string }) => {
+      this.callbacks.onScreenShareStopped?.(data.senderId);
+    });
+
+    this.socket.on("participant-status-changed", (data: { socketId: string, isMicOn: boolean, isCameraOn: boolean }) => {
+      this.callbacks.onRemoteStatusChanged?.(data.socketId, data.isMicOn, data.isCameraOn);
+    });
+  }
+
+  private unregisterSocketEvents(): void {
+    this.socket.off("waiting-room");
+    this.socket.off("join-approved");
+    this.socket.off("join-denied");
+    this.socket.off("removed-from-meeting");
+    this.socket.off("participant-joined");
+    this.socket.off("participant-left");
+    this.socket.off("offer");
+    this.socket.off("answer");
+    this.socket.off("ice-candidate");
+    this.socket.off("join-request");
+    this.socket.off("join-request-cancelled");
+    this.socket.off("host-changed");
+    this.socket.off("receive-message");
+    this.socket.off("emoji-reaction");
+    this.socket.off("screen-share-started");
+    this.socket.off("screen-share-stopped");
+    this.socket.off("participant-status-changed");
+  }
+
+  private async flushRemoteIce(socketId: string): Promise<void> {
+    const peer = this.peers.get(socketId);
+    if (!peer) return;
+
+    const queue = this.pendingRemoteIce.get(socketId) || [];
+    this.pendingRemoteIce.delete(socketId);
+
+    for (const candidate of queue) {
+      try {
+        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn(`[WebRTC:Mesh] ICE queue flush failed for ${socketId}:`, err);
+      }
+    }
   }
 
   private waitForSocket(): Promise<void> {
@@ -158,242 +444,9 @@ export class MeetingPeerSession {
       this.socket.on("connect", onConnect);
       setTimeout(() => {
         this.socket.off("connect", onConnect);
-        console.warn("[WebRTC] Socket connect timeout, continuing anyway");
+        console.warn("[WebRTC:Mesh] Socket connection timeout");
         resolve();
-      }, 8000);
+      }, 5000);
     });
-  }
-
-  private async drainPendingSignals(): Promise<void> {
-    const queue = [...this.pendingSignals];
-    this.pendingSignals.length = 0;
-
-    for (const signal of queue) {
-      switch (signal.type) {
-        case "members":
-          await this.handleExistingMembers(signal.members);
-          break;
-        case "offer":
-          await this.handleOffer(signal.offer, signal.senderId);
-          break;
-        case "answer":
-          await this.handleAnswer(signal.answer, signal.senderId);
-          break;
-        case "ice":
-          await this.handleIceCandidate(signal.candidate, signal.senderId);
-          break;
-      }
-    }
-  }
-
-  /** Second joiner: someone is already in the room — we send the offer. */
-  private async handleExistingMembers(members: string[]): Promise<void> {
-    const targetId = members[0];
-    console.log("[WebRTC] existing-members", members);
-    if (!targetId) return;
-
-    this.setRemotePeerId(targetId);
-    await this.sendOffer(targetId);
-  }
-
-  private async handleOffer(
-    offer: RTCSessionDescriptionInit,
-    senderId: string
-  ): Promise<void> {
-    const peer = this.peer;
-    if (!peer) return;
-
-    this.setRemotePeerId(senderId);
-    console.log("[WebRTC] offer received", peer.signalingState);
-
-    try {
-      if (peer.signalingState === "have-local-offer") {
-        await peer.setLocalDescription({ type: "rollback" });
-      }
-
-      await peer.setRemoteDescription(new RTCSessionDescription(offer));
-      await this.flushRemoteIce(peer);
-
-      const answer = await peer.createAnswer();
-      await peer.setLocalDescription(answer);
-
-      this.socket.emit("answer", {
-        roomId: this.roomId,
-        answer: peer.localDescription,
-      });
-      console.log("[WebRTC] answer sent →", senderId);
-      this.flushOutgoingIce();
-    } catch (error) {
-      console.error("[WebRTC] handleOffer failed", error);
-    }
-  }
-
-  private async handleAnswer(
-    answer: RTCSessionDescriptionInit,
-    senderId: string
-  ): Promise<void> {
-    const peer = this.peer;
-    if (!peer) return;
-
-    this.setRemotePeerId(senderId);
-
-    if (peer.signalingState !== "have-local-offer") {
-      console.warn("[WebRTC] Ignoring answer, state:", peer.signalingState);
-      return;
-    }
-
-    try {
-      await peer.setRemoteDescription(new RTCSessionDescription(answer));
-      await this.flushRemoteIce(peer);
-      this.flushOutgoingIce();
-      console.log("[WebRTC] answer applied ←", senderId);
-    } catch (error) {
-      console.error("[WebRTC] handleAnswer failed", error);
-    }
-  }
-
-  private async handleIceCandidate(
-    candidate: RTCIceCandidateInit,
-    senderId: string
-  ): Promise<void> {
-    const peer = this.peer;
-    if (!peer || !candidate?.candidate) return;
-
-    this.setRemotePeerId(senderId);
-
-    if (peer.remoteDescription?.type) {
-      try {
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (error) {
-        console.warn("[WebRTC] addIceCandidate failed", error);
-      }
-    } else {
-      this.pendingRemoteIce.push(candidate);
-    }
-  }
-
-  private bindPeerEvents(peer: RTCPeerConnection): void {
-    peer.ontrack = (event) => {
-      let stream = event.streams[0];
-
-      if (!stream) {
-        stream = this.remoteStream ?? new MediaStream();
-        if (!stream.getTracks().some((t) => t.id === event.track.id)) {
-          stream.addTrack(event.track);
-        }
-      }
-
-      this.remoteStream = stream;
-      console.log("[WebRTC] ontrack", event.track.kind, event.track.readyState);
-      this.callbacks.onRemoteStream(stream);
-    };
-
-    peer.onicecandidate = (event) => {
-      if (!event.candidate) {
-        console.log("[WebRTC] ICE gathering complete");
-        return;
-      }
-      this.emitIce(event.candidate.toJSON());
-    };
-
-    peer.onconnectionstatechange = () => {
-      logPeerConnectionState(peer, "connection");
-      this.callbacks.onConnectionStateChange?.(peer.connectionState);
-    };
-
-    peer.oniceconnectionstatechange = () => {
-      console.log("[WebRTC] ICE connection:", peer.iceConnectionState);
-    };
-  }
-
-  private async sendOffer(targetId: string): Promise<void> {
-    const peer = this.peer;
-    if (!peer || this.makingOffer) return;
-
-    if (peer.signalingState !== "stable") {
-      console.warn("[WebRTC] Cannot offer in state", peer.signalingState);
-      return;
-    }
-
-    this.makingOffer = true;
-    this.setRemotePeerId(targetId);
-
-    try {
-      const offer = await peer.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: true,
-      });
-      await peer.setLocalDescription(offer);
-
-      this.socket.emit("offer", {
-        roomId: this.roomId,
-        offer: peer.localDescription,
-      });
-      console.log("[WebRTC] offer sent →", targetId);
-      this.flushOutgoingIce();
-    } catch (error) {
-      console.error("[WebRTC] sendOffer failed", error);
-    } finally {
-      this.makingOffer = false;
-    }
-  }
-
-  private setRemotePeerId(socketId: string): void {
-    if (!socketId) return;
-    this.remotePeerId = socketId;
-    this.flushOutgoingIce();
-  }
-
-  private emitIce(candidate: RTCIceCandidateInit): void {
-    if (!this.remotePeerId) {
-      this.pendingOutgoingIce.push(candidate);
-      return;
-    }
-
-    this.socket.emit("ice-candidate", {
-      roomId: this.roomId,
-      candidate,
-    });
-  }
-
-  private flushOutgoingIce(): void {
-    if (!this.remotePeerId) return;
-
-    const queued = [...this.pendingOutgoingIce];
-    this.pendingOutgoingIce.length = 0;
-
-    for (const candidate of queued) {
-      this.socket.emit("ice-candidate", {
-        roomId: this.roomId,
-        candidate,
-      });
-    }
-
-    if (queued.length) {
-      console.log("[WebRTC] Sent queued ICE:", queued.length);
-    }
-  }
-
-  private async flushRemoteIce(peer: RTCPeerConnection): Promise<void> {
-    const queued = [...this.pendingRemoteIce];
-    this.pendingRemoteIce.length = 0;
-
-    for (const candidate of queued) {
-      try {
-        await peer.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (error) {
-        console.warn("[WebRTC] Remote ICE flush failed", error);
-      }
-    }
-  }
-
-  private closePeerOnly(): void {
-    this.peer?.close();
-    this.peer = null;
-    this.remoteStream = null;
-    this.remotePeerId = null;
-    this.pendingRemoteIce.length = 0;
-    this.pendingOutgoingIce.length = 0;
-    this.makingOffer = false;
   }
 }
