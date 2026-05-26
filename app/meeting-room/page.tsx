@@ -790,15 +790,18 @@ export default function MeetingRoom() {
                   className="w-full h-full object-cover rounded-2xl scale-x-[-1]"
                 />
               ) : (
-                <div className="flex flex-col items-center gap-4">
+                <div className="flex flex-col items-center gap-4 px-4 text-center">
                   <MeetAvatar
                     name={displayName}
                     email={identity.email}
                     image={identity.image}
                     size="xl"
                   />
-                  <div className="max-w-[70%] truncate text-sm text-white/70">
-                    {identity.email || displayName}
+                  <div className="max-w-[70%]">
+                    <div className="truncate text-sm font-medium text-white">{displayName}</div>
+                    {identity.email && (
+                      <div className="truncate text-xs text-white/60">{identity.email}</div>
+                    )}
                   </div>
                 </div>
               )}
@@ -819,15 +822,18 @@ export default function MeetingRoom() {
                 {p.stream && p.isCameraOn ? (
                   <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
                 ) : (
-                  <div className="flex flex-col items-center gap-4">
+                  <div className="flex flex-col items-center gap-4 px-4 text-center">
                     <MeetAvatar
                       name={p.displayName}
                       email={p.email}
                       image={p.image}
                       size="xl"
                     />
-                    <div className="max-w-[70%] truncate text-sm text-white/70">
-                      {p.email || p.displayName}
+                    <div className="max-w-[70%]">
+                      <div className="truncate text-sm font-medium text-white">{p.displayName}</div>
+                      {p.email && (
+                        <div className="truncate text-xs text-white/60">{p.email}</div>
+                      )}
                     </div>
                   </div>
                 )}

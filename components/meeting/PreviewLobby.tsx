@@ -54,18 +54,24 @@ export function PreviewLobby({
           />
 
           {!isCameraOn && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#3c4043]">
-              <div className="h-28 w-28 overflow-hidden rounded-full bg-[#8ab4f8] flex items-center justify-center text-4xl font-medium text-[#202124]">
-                {image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={image}
-                    alt={label}
-                    className="h-full w-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  initial
+            <div className="absolute inset-0 flex items-center justify-center bg-[#3c4043] px-6 text-center">
+              <div>
+                <div className="mx-auto mb-4 h-28 w-28 overflow-hidden rounded-full bg-[#8ab4f8] flex items-center justify-center text-4xl font-medium text-[#202124]">
+                  {image ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={image}
+                      alt={label}
+                      className="h-full w-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    initial
+                  )}
+                </div>
+                <div className="truncate text-sm font-medium text-white">{label}</div>
+                {email && (
+                  <div className="truncate text-xs text-white/60">{email}</div>
                 )}
               </div>
             </div>
