@@ -1,18 +1,58 @@
 import type { Socket } from "socket.io-client";
 import { PEER_CONNECTION_CONFIG } from "./config";
 
+type MeetingMember = {
+  socketId: string;
+  displayName: string;
+  email?: string;
+  image?: string;
+  isMicOn: boolean;
+  isCameraOn: boolean;
+  isScreenSharing?: boolean;
+  isHost: boolean;
+};
+
+type HostChangedPayload = {
+  hostId: string;
+  hostDetails?: MeetingMember;
+};
+
+type ChatPayload = {
+  senderId: string;
+  senderName: string;
+  message: string;
+  timestamp: number;
+};
+
+type EmojiPayload = {
+  senderId: string;
+  emoji: string;
+};
+
 export type MeetingSessionCallbacks = {
   onWaitingRoom?: () => void;
-  onJoinApproved?: (members: any[], isHost: boolean) => void;
+  onJoinApproved?: (members: MeetingMember[], isHost: boolean) => void;
   onJoinDenied?: (reason: string) => void;
-  onRemoteStreamAdded: (socketId: string, stream: MediaStream, displayName: string) => void;
+  onRemoteStreamAdded: (
+    socketId: string,
+    stream: MediaStream,
+    displayName: string,
+    details?: { email?: string; image?: string }
+  ) => void;
   onRemoteStreamRemoved: (socketId: string) => void;
-  onRemoteStatusChanged?: (socketId: string, isMicOn: boolean, isCameraOn: boolean) => void;
-  onJoinRequest?: (data: { socketId: string, displayName: string }) => void;
+  onRemoteStatusChanged?: (data: {
+    socketId: string;
+    isMicOn: boolean;
+    isCameraOn: boolean;
+    displayName?: string;
+    email?: string;
+    image?: string;
+  }) => void;
+  onJoinRequest?: (data: { socketId: string, displayName: string, email?: string, image?: string }) => void;
   onJoinRequestCancelled?: (data: { socketId: string }) => void;
-  onHostChanged?: (data: { hostId: string, hostDetails: any }) => void;
-  onReceiveMessage?: (data: { senderId: string, senderName: string, message: string, timestamp: number }) => void;
-  onEmojiReaction?: (data: { senderId: string, emoji: string }) => void;
+  onHostChanged?: (data: HostChangedPayload) => void;
+  onReceiveMessage?: (data: ChatPayload) => void;
+  onEmojiReaction?: (data: EmojiPayload) => void;
   onScreenShareStarted?: (senderId: string) => void;
   onScreenShareStopped?: (senderId: string) => void;
   onKicked?: () => void;
@@ -22,6 +62,7 @@ export class MeetingPeerSession {
   private peers = new Map<string, RTCPeerConnection>();
   private remoteStreams = new Map<string, MediaStream>();
   private remoteDisplayNames = new Map<string, string>();
+  private remoteDetails = new Map<string, { email?: string; image?: string }>();
   private pendingRemoteIce = new Map<string, RTCIceCandidateInit[]>();
   private iceServers: RTCIceServer[] = [];
   
@@ -48,7 +89,13 @@ export class MeetingPeerSession {
     return this.peers;
   }
 
-  async start(displayName: string): Promise<void> {
+  async start(identity: {
+    displayName: string;
+    email?: string;
+    image?: string;
+    isMicOn?: boolean;
+    isCameraOn?: boolean;
+  }): Promise<void> {
     if (this.isSessionActive || this.isStarting) {
       console.log("[WebRTC:Mesh] Session already active or starting");
       return;
@@ -66,8 +113,8 @@ export class MeetingPeerSession {
       this.bindSocketEvents();
 
       // Ask to join room
-      this.socket.emit("join-request", { roomId: this.roomId, displayName });
-      console.log("[WebRTC:Mesh] join-request emitted for:", displayName);
+      this.socket.emit("join-request", { roomId: this.roomId, ...identity });
+      console.log("[WebRTC:Mesh] join-request emitted for:", identity.displayName);
 
       this.isSessionActive = true;
     } finally {
@@ -163,6 +210,7 @@ export class MeetingPeerSession {
     this.peers.clear();
     this.remoteStreams.clear();
     this.remoteDisplayNames.clear();
+    this.remoteDetails.clear();
     this.pendingRemoteIce.clear();
     this.screenShareStream = null;
   }
@@ -192,7 +240,12 @@ export class MeetingPeerSession {
         }
       }
       this.remoteStreams.set(socketId, stream);
-      this.callbacks.onRemoteStreamAdded(socketId, stream, displayName);
+      this.callbacks.onRemoteStreamAdded(
+        socketId,
+        stream,
+        displayName,
+        this.remoteDetails.get(socketId)
+      );
     };
 
     // ICE trickle
@@ -239,6 +292,7 @@ export class MeetingPeerSession {
     }
     this.remoteStreams.delete(socketId);
     this.remoteDisplayNames.delete(socketId);
+    this.remoteDetails.delete(socketId);
     this.pendingRemoteIce.delete(socketId);
     this.callbacks.onRemoteStreamRemoved(socketId);
     console.log(`[WebRTC:Mesh] Removed peer and streams for: ${socketId}`);
@@ -273,13 +327,14 @@ export class MeetingPeerSession {
       this.callbacks.onWaitingRoom?.();
     });
 
-    this.socket.on("join-approved", async (data: { isHost: boolean, members: any[] }) => {
+    this.socket.on("join-approved", async (data: { isHost: boolean, members: MeetingMember[] }) => {
       console.log("[WebRTC:Mesh] join-approved event received. Members count:", data.members.length);
       this.callbacks.onJoinApproved?.(data.members, data.isHost);
 
       // We are the joiner: initiate offers to all existing members
       for (const m of data.members) {
         if (m.socketId !== this.socket.id) {
+          this.remoteDetails.set(m.socketId, { email: m.email, image: m.image });
           this.getOrCreatePeer(m.socketId, m.displayName);
           await this.sendOffer(m.socketId);
         }
@@ -297,10 +352,14 @@ export class MeetingPeerSession {
     });
 
     // 2. Mesh participant joins/leaves
-    this.socket.on("participant-joined", (details: any) => {
+    this.socket.on("participant-joined", (details: MeetingMember) => {
       console.log("[WebRTC:Mesh] participant-joined event from:", details.socketId);
       // Wait for their offer - we don't start the peer connection here to avoid simultaneous double connections
       this.remoteDisplayNames.set(details.socketId, details.displayName);
+      this.remoteDetails.set(details.socketId, {
+        email: details.email,
+        image: details.image,
+      });
     });
 
     this.socket.on("participant-left", (data: { socketId: string }) => {
@@ -364,7 +423,7 @@ export class MeetingPeerSession {
     });
 
     // 4. In-meeting broadcasts
-    this.socket.on("join-request", (data: { socketId: string, displayName: string }) => {
+    this.socket.on("join-request", (data: { socketId: string, displayName: string, email?: string, image?: string }) => {
       this.callbacks.onJoinRequest?.(data);
     });
 
@@ -372,15 +431,15 @@ export class MeetingPeerSession {
       this.callbacks.onJoinRequestCancelled?.(data);
     });
 
-    this.socket.on("host-changed", (data: { hostId: string, hostDetails: any }) => {
+    this.socket.on("host-changed", (data: HostChangedPayload) => {
       this.callbacks.onHostChanged?.(data);
     });
 
-    this.socket.on("receive-message", (data: any) => {
+    this.socket.on("receive-message", (data: ChatPayload) => {
       this.callbacks.onReceiveMessage?.(data);
     });
 
-    this.socket.on("emoji-reaction", (data: any) => {
+    this.socket.on("emoji-reaction", (data: EmojiPayload) => {
       this.callbacks.onEmojiReaction?.(data);
     });
 
@@ -392,8 +451,15 @@ export class MeetingPeerSession {
       this.callbacks.onScreenShareStopped?.(data.senderId);
     });
 
-    this.socket.on("participant-status-changed", (data: { socketId: string, isMicOn: boolean, isCameraOn: boolean }) => {
-      this.callbacks.onRemoteStatusChanged?.(data.socketId, data.isMicOn, data.isCameraOn);
+    this.socket.on("participant-status-changed", (data: {
+      socketId: string;
+      isMicOn: boolean;
+      isCameraOn: boolean;
+      displayName?: string;
+      email?: string;
+      image?: string;
+    }) => {
+      this.callbacks.onRemoteStatusChanged?.(data);
     });
   }
 

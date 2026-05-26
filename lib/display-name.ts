@@ -1,25 +1,45 @@
-export function getDisplayName(): string {
-  if (typeof window === "undefined") return "Guest";
+export type UserIdentity = {
+  displayName: string;
+  email?: string;
+  image?: string;
+};
+
+export function getCurrentUserIdentity(): UserIdentity {
+  if (typeof window === "undefined") {
+    return { displayName: "Guest" };
+  }
 
   try {
     const raw = localStorage.getItem("user");
-    if (!raw) return "Guest";
+    if (!raw) return { displayName: "Guest" };
 
     const user = JSON.parse(raw) as {
-      name?: string;
-      displayName?: string;
-      email?: string;
+      name?: string | null;
+      displayName?: string | null;
+      email?: string | null;
+      image?: string | null;
+      picture?: string | null;
     };
 
-    return (
-      user.name ||
-      user.displayName ||
-      user.email?.split("@")[0] ||
-      "Guest"
-    );
+    const email = user.email?.trim() || undefined;
+    const displayName =
+      user.name?.trim() ||
+      user.displayName?.trim() ||
+      email ||
+      "Guest";
+
+    return {
+      displayName,
+      email,
+      image: user.image || user.picture || undefined,
+    };
   } catch {
-    return "Guest";
+    return { displayName: "Guest" };
   }
+}
+
+export function getDisplayName(): string {
+  return getCurrentUserIdentity().displayName;
 }
 
 export function getDisplayInitial(name: string): string {

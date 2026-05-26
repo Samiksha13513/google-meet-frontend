@@ -10,10 +10,18 @@ function AuthCallbackContent() {
 
   useEffect(() => {
     const token = searchParams.get('token');
+    const user = searchParams.get('user');
     const error = searchParams.get('error');
 
     if (token) {
       localStorage.setItem('authToken', token);
+      if (user) {
+        try {
+          localStorage.setItem('user', user);
+        } catch {
+          // Ignore malformed user payloads; token auth still succeeds.
+        }
+      }
       router.replace('/dashboard');
       return;
     }
