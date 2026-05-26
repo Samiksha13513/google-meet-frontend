@@ -26,6 +26,7 @@ export function MeetingActions() {
 
   const [joining, setJoining] = useState(false);
   const [creatingLater, setCreatingLater] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
 
   const [meetingLink, setMeetingLink] = useState("");
 
@@ -88,6 +89,43 @@ export function MeetingActions() {
     setJoining(false);
   }
 };
+
+  const handleScheduleInCalendar = async () => {
+    try {
+      setScheduling(true);
+      setError("");
+
+      const data = await createMeeting();
+      const code = getMeetingCode(data);
+
+      if (code) {
+        const link = buildMeetingLink(code);
+        
+        // Dynamic time generation: rounded to the next hour/30 min mark
+        const now = new Date();
+        const start = new Date(now);
+        start.setMinutes(Math.ceil(now.getMinutes() / 30) * 30, 0, 0);
+        const end = new Date(start);
+        end.setHours(start.getHours() + 1);
+
+        const formatDate = (d: Date) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+        const datesParam = `${formatDate(start)}/${formatDate(end)}`;
+
+        const title = "Google Meet Video Call";
+        const description = `Join this meeting:\n${link}\n\nMeeting code: ${code}`;
+        
+        const calendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${encodeURIComponent(datesParam)}&details=${encodeURIComponent(description)}&location=${encodeURIComponent(link)}`;
+        
+        // Open the template in a new tab
+        window.open(calendarUrl, "_blank");
+      }
+    } catch (error) {
+      handleCreateError(error);
+    } finally {
+      setScheduling(false);
+      setOpenDropdown(false);
+    }
+  };
 
   const handleJoinMeeting = async () => {
     const code = meetingCode.trim();
@@ -184,12 +222,15 @@ export function MeetingActions() {
 
               {/* CALENDAR */}
 
-              <div className="flex cursor-pointer items-center gap-4 rounded-xl p-3 hover:bg-gray-100">
+              <div
+                onClick={handleScheduleInCalendar}
+                className="flex cursor-pointer items-center gap-4 rounded-xl p-3 hover:bg-gray-100"
+              >
 
                 <Calendar className="h-5 w-5" />
 
                 <span>
-                  Schedule in Google Calendar
+                  {scheduling ? "Scheduling..." : "Schedule in Google Calendar"}
                 </span>
 
               </div>
