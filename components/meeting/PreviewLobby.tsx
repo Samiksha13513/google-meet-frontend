@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 type PreviewLobbyProps = {
   meetingCode: string;
   displayName: string;
+  email?: string;
+  image?: string;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   isMicOn: boolean;
   isCameraOn: boolean;
@@ -21,6 +23,8 @@ type PreviewLobbyProps = {
 export function PreviewLobby({
   meetingCode,
   displayName,
+  email,
+  image,
   videoRef,
   isMicOn,
   isCameraOn,
@@ -30,7 +34,8 @@ export function PreviewLobby({
   onToggleCamera,
   onJoinNow,
 }: PreviewLobbyProps) {
-  const initial = getDisplayInitial(displayName);
+  const label = email || displayName;
+  const initial = getDisplayInitial(label);
 
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col">
@@ -50,14 +55,24 @@ export function PreviewLobby({
 
           {!isCameraOn && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#3c4043]">
-              <div className="h-28 w-28 rounded-full bg-[#8ab4f8] flex items-center justify-center text-4xl font-medium text-[#202124]">
-                {initial}
+              <div className="h-28 w-28 overflow-hidden rounded-full bg-[#8ab4f8] flex items-center justify-center text-4xl font-medium text-[#202124]">
+                {image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={image}
+                    alt={label}
+                    className="h-full w-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  initial
+                )}
               </div>
             </div>
           )}
 
           <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded-md bg-black/50 px-3 py-1.5 text-sm">
-            <span>{displayName}</span>
+            <span>{label}</span>
             {!isMicOn && <MicOff className="h-4 w-4 text-red-400" />}
           </div>
         </div>

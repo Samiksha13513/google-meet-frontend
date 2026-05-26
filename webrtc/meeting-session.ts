@@ -37,8 +37,9 @@ export type MeetingSessionCallbacks = {
     socketId: string,
     stream: MediaStream,
     displayName: string,
-    details?: { email?: string; image?: string }
+    details?: Partial<MeetingMember>
   ) => void;
+  onParticipantJoined?: (member: MeetingMember) => void;
   onRemoteStreamRemoved: (socketId: string) => void;
   onRemoteStatusChanged?: (data: {
     socketId: string;
@@ -62,7 +63,7 @@ export class MeetingPeerSession {
   private peers = new Map<string, RTCPeerConnection>();
   private remoteStreams = new Map<string, MediaStream>();
   private remoteDisplayNames = new Map<string, string>();
-  private remoteDetails = new Map<string, { email?: string; image?: string }>();
+  private remoteDetails = new Map<string, Partial<MeetingMember>>();
   private pendingRemoteIce = new Map<string, RTCIceCandidateInit[]>();
   private iceServers: RTCIceServer[] = [];
   
@@ -334,7 +335,7 @@ export class MeetingPeerSession {
       // We are the joiner: initiate offers to all existing members
       for (const m of data.members) {
         if (m.socketId !== this.socket.id) {
-          this.remoteDetails.set(m.socketId, { email: m.email, image: m.image });
+          this.remoteDetails.set(m.socketId, m);
           this.getOrCreatePeer(m.socketId, m.displayName);
           await this.sendOffer(m.socketId);
         }
@@ -356,10 +357,8 @@ export class MeetingPeerSession {
       console.log("[WebRTC:Mesh] participant-joined event from:", details.socketId);
       // Wait for their offer - we don't start the peer connection here to avoid simultaneous double connections
       this.remoteDisplayNames.set(details.socketId, details.displayName);
-      this.remoteDetails.set(details.socketId, {
-        email: details.email,
-        image: details.image,
-      });
+      this.remoteDetails.set(details.socketId, details);
+      this.callbacks.onParticipantJoined?.(details);
     });
 
     this.socket.on("participant-left", (data: { socketId: string }) => {
@@ -370,7 +369,12 @@ export class MeetingPeerSession {
     // 3. WebRTC mesh signaling
     this.socket.on("offer", async (data: { offer: RTCSessionDescriptionInit, senderId: string }) => {
       console.log(`[WebRTC:Mesh] Offer received from ← ${data.senderId}`);
-      const displayName = this.remoteDisplayNames.get(data.senderId) || "Participant";
+      const knownDetails = this.remoteDetails.get(data.senderId);
+      const displayName =
+        this.remoteDisplayNames.get(data.senderId) ||
+        knownDetails?.email ||
+        knownDetails?.displayName ||
+        "Signed-in user";
       const peer = this.getOrCreatePeer(data.senderId, displayName);
 
       try {
