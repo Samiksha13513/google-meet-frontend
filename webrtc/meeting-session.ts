@@ -115,7 +115,7 @@ export class MeetingPeerSession {
 
       // Ask to join room
       this.socket.emit("join-request", { roomId: this.roomId, ...identity });
-      console.log("[WebRTC:Mesh] join-request emitted for:", identity.displayName);
+      console.log("[WebRTC:Mesh] join-request emitted for:", { roomId: this.roomId, ...identity });
 
       this.isSessionActive = true;
     } finally {
