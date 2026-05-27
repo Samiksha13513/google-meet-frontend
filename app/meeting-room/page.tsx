@@ -23,13 +23,20 @@ import { useParams, useRouter } from "next/navigation";
 import { socket } from "@/lib/socket";
 import { getLocalStream } from "../../webrtc/media";
 import { MeetingPeerSession } from "../../webrtc/meeting-session";
+import { MeetAvatar } from "@/components/meeting/MeetAvatar";
+import { ParticipantVideoTile } from "@/components/meeting/ParticipantVideoTile";
 import { PreviewLobby } from "@/components/meeting/PreviewLobby";
 import {
   getCurrentUserIdentity,
-  getDisplayInitial,
-  getIdentityLabel,
+  getParticipantName,
+  isUserAuthenticated,
   type UserIdentity,
 } from "@/lib/display-name";
+import {
+  loadGuestDisplayName,
+  persistMeetingIdentity,
+  saveGuestDisplayName,
+} from "@/lib/meeting-identity";
 import { getMeetingByCode } from "@/lib/api";
 
 const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "👏", "🎉", "🤔"];
@@ -75,77 +82,32 @@ type JoinRequest = {
   image?: string;
 };
 
-// Isolated Video element component to ensure stable stream attachments and avoid React playback resets
-const ParticipantVideo = ({
-  stream,
-  isLocal,
-  muted,
-}: {
-  stream?: MediaStream;
-  isLocal: boolean;
-  muted: boolean;
-}) => {
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !stream) return;
-
-    video.srcObject = stream;
-    video.play().catch((err) => {
-      console.log(`[WebRTC:Video] Autoplay for ${isLocal ? "local" : "remote"} stream failed:`, err);
-    });
-  }, [stream, isLocal]);
-
-  return (
-    <video
-      ref={videoRef}
-      autoPlay
-      playsInline
-      muted={muted}
-      className="w-full h-full object-cover rounded-2xl"
-    />
-  );
-};
-
-const MeetAvatar = ({
-  name,
-  email,
-  image,
-  size = "lg",
-}: {
-  name: string;
-  email?: string;
-  image?: string;
-  size?: "sm" | "md" | "lg" | "xl";
-}) => {
-  const sizeClass = {
-    sm: "h-9 w-9 text-sm",
-    md: "h-11 w-11 text-base",
-    lg: "h-24 w-24 text-4xl",
-    xl: "h-28 w-28 text-5xl",
-  }[size];
-  const label = getIdentityLabel({ displayName: name, email });
-
-  return (
-    <div
-      className={`${sizeClass} shrink-0 overflow-hidden rounded-full bg-[#8ab4f8] text-[#202124] ring-1 ring-white/10 flex items-center justify-center font-medium shadow-inner`}
-      title={email || name}
-    >
-      {image ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={image}
-          alt={label}
-          className="h-full w-full object-cover"
-          referrerPolicy="no-referrer"
-        />
-      ) : (
-        <span>{getDisplayInitial(label)}</span>
-      )}
-    </div>
-  );
-};
+function mapMemberToParticipant(
+  m: {
+    socketId: string;
+    displayName?: string;
+    email?: string;
+    image?: string;
+    isMicOn?: boolean;
+    isCameraOn?: boolean;
+    isHost?: boolean;
+    isScreenSharing?: boolean;
+  },
+  stream?: MediaStream
+): Participant {
+  const displayName = getParticipantName(m);
+  return {
+    socketId: m.socketId,
+    displayName,
+    email: m.email || undefined,
+    image: m.image || undefined,
+    stream,
+    isMicOn: m.isMicOn ?? true,
+    isCameraOn: m.isCameraOn ?? true,
+    isHost: m.isHost ?? false,
+    isScreenSharing: m.isScreenSharing ?? false,
+  };
+}
 
 export default function MeetingRoom() {
   const router = useRouter();
@@ -157,17 +119,29 @@ export default function MeetingRoom() {
 
   // State Management
   const [meetingState, setMeetingState] = useState<MeetingState>("lobby");
-  const [identity] = useState<UserIdentity>(() => getCurrentUserIdentity());
-  const displayName = getIdentityLabel(identity);
-
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [customDisplayName, setCustomDisplayName] = useState("");
+  const [identity, setIdentity] = useState<UserIdentity>(() =>
+    getCurrentUserIdentity()
+  );
+  const [isAuthenticated, setIsAuthenticated] = useState(() =>
+    isUserAuthenticated()
+  );
+  const [customDisplayName, setCustomDisplayName] = useState(() =>
+    loadGuestDisplayName()
+  );
 
   useEffect(() => {
-    setIsAuthenticated(!!localStorage.getItem("authToken"));
+    const syncAuth = () => {
+      setIsAuthenticated(isUserAuthenticated());
+      setIdentity(getCurrentUserIdentity());
+    };
+    syncAuth();
+    window.addEventListener("focus", syncAuth);
+    return () => window.removeEventListener("focus", syncAuth);
   }, []);
 
-  const resolvedDisplayName = isAuthenticated ? displayName : (customDisplayName || "Guest");
+  const resolvedDisplayName = isAuthenticated
+    ? getParticipantName(identity)
+    : customDisplayName.trim() || "Guest";
   
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCameraOn, setIsCameraOn] = useState(true);
@@ -181,7 +155,9 @@ export default function MeetingRoom() {
   const [deniedReason, setDeniedReason] = useState("Host denied your request");
 
   const [currentTime, setCurrentTime] = useState("");
-  const [, setParticipantLeftMessage] = useState<string | null>(null);
+  const [participantLeftMessage, setParticipantLeftMessage] = useState<
+    string | null
+  >(null);
 
   // Active participants list
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -200,6 +176,8 @@ export default function MeetingRoom() {
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
 
   // Refs
+  const [localPreviewStream, setLocalPreviewStream] =
+    useState<MediaStream | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const sessionRef = useRef<MeetingPeerSession | null>(null);
@@ -216,6 +194,7 @@ export default function MeetingRoom() {
     const stream = localStreamRef.current;
     stream?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
+    setLocalPreviewStream(null);
   };
 
   const cleanupLiveSession = () => {
@@ -342,6 +321,20 @@ export default function MeetingRoom() {
   const handleJoinNow = async () => {
     if (!meetingCode) return;
 
+    const guestName = customDisplayName.trim();
+    if (!isAuthenticated && !guestName) return;
+
+    if (!isAuthenticated) {
+      saveGuestDisplayName(guestName);
+    }
+
+    persistMeetingIdentity({
+      displayName: resolvedDisplayName,
+      email: isAuthenticated ? identity.email : undefined,
+      image: isAuthenticated ? identity.image : undefined,
+      isGuest: !isAuthenticated,
+    });
+
     setMeetingState("waiting");
 
     if (!socket.connected) {
@@ -364,16 +357,7 @@ export default function MeetingRoom() {
         setParticipants(
           members
             .filter((m) => m.socketId !== socket.id)
-            .map((m) => ({
-              socketId: m.socketId,
-              displayName: getIdentityLabel(m),
-              email: m.email,
-              image: m.image,
-              isMicOn: m.isMicOn,
-              isCameraOn: m.isCameraOn,
-              isHost: m.isHost,
-              isScreenSharing: m.isScreenSharing || false,
-            }))
+            .map((m) => mapMemberToParticipant(m))
         );
       },
       onJoinDenied: (reason) => {
@@ -387,40 +371,36 @@ export default function MeetingRoom() {
           if (exists) {
             return prev.map((p) =>
               p.socketId === socketId
-                ? {
-                    ...p,
-                    stream: remoteStream,
-                    email: p.email || remoteDetails?.email,
-                    image: p.image || remoteDetails?.image,
-                    displayName: getIdentityLabel({
-                      displayName: p.displayName || remoteName,
-                      email: p.email || remoteDetails?.email,
-                    }),
-                    isMicOn: remoteDetails?.isMicOn ?? p.isMicOn,
-                    isCameraOn: remoteDetails?.isCameraOn ?? p.isCameraOn,
-                    isHost: remoteDetails?.isHost ?? p.isHost,
-                  }
+                ? mapMemberToParticipant(
+                    {
+                      socketId,
+                      displayName: remoteDetails?.displayName || remoteName || p.displayName,
+                      email: remoteDetails?.email || p.email,
+                      image: remoteDetails?.image || p.image,
+                      isMicOn: remoteDetails?.isMicOn ?? p.isMicOn,
+                      isCameraOn: remoteDetails?.isCameraOn ?? p.isCameraOn,
+                      isHost: remoteDetails?.isHost ?? p.isHost,
+                    },
+                    remoteStream
+                  )
                 : p
             );
-          } else {
-            return [
-              ...prev,
+          }
+          return [
+            ...prev,
+            mapMemberToParticipant(
               {
                 socketId,
-                displayName: getIdentityLabel({
-                  displayName: remoteName,
-                  email: remoteDetails?.email,
-                }),
+                displayName: remoteDetails?.displayName || remoteName,
                 email: remoteDetails?.email,
                 image: remoteDetails?.image,
-                stream: remoteStream,
-                isMicOn: remoteDetails?.isMicOn ?? true,
-                isCameraOn: remoteDetails?.isCameraOn ?? true,
-                isHost: remoteDetails?.isHost ?? false,
-                isScreenSharing: false,
+                isMicOn: remoteDetails?.isMicOn,
+                isCameraOn: remoteDetails?.isCameraOn,
+                isHost: remoteDetails?.isHost,
               },
-            ];
-          }
+              remoteStream
+            ),
+          ];
         });
       },
       onRemoteStreamRemoved: (socketId) => {
@@ -435,7 +415,7 @@ export default function MeetingRoom() {
                   ...p,
                   isMicOn: data.isMicOn,
                   isCameraOn: data.isCameraOn,
-                  displayName: getIdentityLabel({
+                  displayName: getParticipantName({
                     displayName: data.displayName || p.displayName,
                     email: data.email || p.email,
                   }),
@@ -455,7 +435,7 @@ export default function MeetingRoom() {
             ...prev,
             {
               ...data,
-              displayName: getIdentityLabel(data),
+              displayName: getParticipantName(data),
             },
           ];
         });
@@ -466,33 +446,12 @@ export default function MeetingRoom() {
           if (prev.some((p) => p.socketId === member.socketId)) {
             return prev.map((p) =>
               p.socketId === member.socketId
-                ? {
-                    ...p,
-                    displayName: getIdentityLabel(member),
-                    email: member.email || p.email,
-                    image: member.image || p.image,
-                    isMicOn: member.isMicOn,
-                    isCameraOn: member.isCameraOn,
-                    isHost: member.isHost,
-                    isScreenSharing: member.isScreenSharing || false,
-                  }
+                ? { ...mapMemberToParticipant(member, p.stream), stream: p.stream }
                 : p
             );
           }
 
-          return [
-            ...prev,
-            {
-              socketId: member.socketId,
-              displayName: getIdentityLabel(member),
-              email: member.email,
-              image: member.image,
-              isMicOn: member.isMicOn,
-              isCameraOn: member.isCameraOn,
-              isHost: member.isHost,
-              isScreenSharing: member.isScreenSharing || false,
-            },
-          ];
+          return [...prev, mapMemberToParticipant(member)];
         });
       },
       onJoinRequestCancelled: (data) => {
@@ -543,7 +502,7 @@ export default function MeetingRoom() {
 
     sessionRef.current = session;
     await session.start({
-      displayName: isAuthenticated ? displayName : customDisplayName,
+      displayName: resolvedDisplayName,
       email: isAuthenticated ? identity.email : undefined,
       image: isAuthenticated ? identity.image : undefined,
       token: token || undefined,
@@ -560,6 +519,7 @@ export default function MeetingRoom() {
       stream.getAudioTracks().forEach((t) => (t.enabled = isMicOn));
       stream.getVideoTracks().forEach((t) => (t.enabled = isCameraOn));
       localStreamRef.current = stream;
+      setLocalPreviewStream(stream);
       setMediaError(null);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -677,7 +637,7 @@ export default function MeetingRoom() {
         <div className="relative flex items-center justify-center">
           <div className="absolute h-28 w-28 rounded-full border-4 border-[#8ab4f8] animate-ping" />
           <MeetAvatar
-            name={resolvedDisplayName}
+            displayName={resolvedDisplayName}
             email={isAuthenticated ? identity.email : undefined}
             image={isAuthenticated ? identity.image : undefined}
             size="xl"
@@ -738,13 +698,18 @@ export default function MeetingRoom() {
     );
   }
 
-  // Calculate Responsive Grid layouts
-  const totalConferencingUsers = participants.length + 1; // Participants + local user
+  const totalConferencingUsers = participants.length + 1;
   let gridCols = "grid-cols-1";
-  if (totalConferencingUsers === 2) gridCols = "grid-cols-1 md:grid-cols-2";
-  else if (totalConferencingUsers <= 4) gridCols = "grid-cols-2";
-  else if (totalConferencingUsers <= 6) gridCols = "grid-cols-2 md:grid-cols-3";
-  else gridCols = "grid-cols-3 md:grid-cols-4";
+  if (totalConferencingUsers === 1) gridCols = "grid-cols-1";
+  else if (totalConferencingUsers === 2)
+    gridCols = "grid-cols-1 sm:grid-cols-2";
+  else if (totalConferencingUsers <= 4)
+    gridCols = "grid-cols-2";
+  else if (totalConferencingUsers <= 6)
+    gridCols = "grid-cols-2 lg:grid-cols-3";
+  else gridCols = "grid-cols-2 md:grid-cols-3 xl:grid-cols-4";
+
+  const sidebarOpen = showChat || showParticipantsList;
 
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
@@ -753,7 +718,7 @@ export default function MeetingRoom() {
         <div className="absolute right-4 top-4 z-50 w-[min(360px,calc(100vw-32px))] rounded-2xl border border-white/10 bg-[#2d2e30] p-4 shadow-2xl animate-fade-in">
           <div className="flex items-start gap-3">
             <MeetAvatar
-              name={joinRequests[0].displayName}
+              displayName={joinRequests[0].displayName}
               email={joinRequests[0].email}
               image={joinRequests[0].image}
               size="md"
@@ -799,90 +764,79 @@ export default function MeetingRoom() {
         ))}
       </div>
 
-      {/* Main Grid View */}
-      <div className="flex-1 flex overflow-hidden p-3 gap-3">
-        <div className="flex-1 flex flex-col justify-center">
-          <div className={`grid ${gridCols} gap-4 w-full max-w-7xl mx-auto h-full p-2 overflow-y-auto`}>
-            {/* 1. Local Participant Card */}
-            <div className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video max-h-[500px]">
-              {isCameraOn ? (
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="w-full h-full object-cover rounded-2xl scale-x-[-1]"
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-4">
-                  <MeetAvatar
-                    name={resolvedDisplayName}
-                    email={isAuthenticated ? identity.email : undefined}
-                    image={isAuthenticated ? identity.image : undefined}
-                    size="xl"
-                  />
-                  <div className="max-w-[70%] truncate text-sm text-white/70">
-                    {(isAuthenticated && identity.email) || resolvedDisplayName}
-                  </div>
-                </div>
-              )}
-              {/* Badges */}
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10">
-                <span className="max-w-[120px] truncate">{resolvedDisplayName} (You)</span>
-                {isHost && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
-                {!isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
-              </div>
-            </div>
+      {participantLeftMessage && (
+        <div className="absolute top-3 left-1/2 z-40 max-w-[90vw] -translate-x-1/2 rounded-lg bg-[#3c4043] px-4 py-2 text-center text-sm text-[#e8eaed] shadow-lg">
+          {participantLeftMessage}
+        </div>
+      )}
 
-            {/* 2. Remote Participants Cards */}
+      {/* Main Grid View */}
+      <div className="relative flex min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
+        <div
+          className={`flex min-h-0 min-w-0 flex-1 flex-col justify-center transition-all ${
+            sidebarOpen ? "lg:mr-0" : ""
+          }`}
+        >
+          <div
+            className={`mx-auto grid h-full w-full max-w-7xl auto-rows-fr gap-2 overflow-y-auto p-1 sm:gap-3 sm:p-2 ${gridCols}`}
+          >
+            <ParticipantVideoTile
+              participant={{
+                socketId: socket.id || "local",
+                displayName: resolvedDisplayName,
+                email: isAuthenticated ? identity.email : undefined,
+                image: isAuthenticated ? identity.image : undefined,
+                stream: localPreviewStream || undefined,
+                isMicOn,
+                isCameraOn,
+                isHost,
+                isLocal: true,
+              }}
+              labelSuffix=" (You)"
+              mirrored
+            />
+
             {participants.map((p) => (
-              <div
+              <ParticipantVideoTile
                 key={p.socketId}
-                className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video max-h-[500px]"
-              >
-                {p.stream && p.isCameraOn ? (
-                  <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
-                ) : (
-                  <div className="flex flex-col items-center gap-4">
-                    <MeetAvatar
-                      name={p.displayName}
-                      email={p.email}
-                      image={p.image}
-                      size="xl"
-                    />
-                    <div className="max-w-[70%] truncate text-sm text-white/70">
-                      {p.email || p.displayName}
-                    </div>
-                  </div>
-                )}
-                {/* Status bar */}
-                <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10">
-                  <span className="max-w-[120px] truncate">{p.displayName}</span>
-                  {p.isHost && (
-                    <span title="Host">
-                      <Shield className="h-3.5 w-3.5 text-yellow-400" />
-                    </span>
-                  )}
-                  {!p.isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
-                </div>
-                {/* Host Control Actions */}
-                {isHost && (
-                  <button
-                    onClick={() => handleKick(p.socketId)}
-                    className="absolute top-3 right-3 h-8 w-8 rounded-full bg-black/40 hover:bg-red-500 hover:text-white flex items-center justify-center backdrop-blur-sm transition-all"
-                    title="Remove participant"
-                  >
-                    <UserX className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
+                participant={{
+                  ...p,
+                  stream: p.stream,
+                  isCameraOn: p.isCameraOn && Boolean(p.stream),
+                }}
+                headerAction={
+                  isHost ? (
+                    <button
+                      type="button"
+                      onClick={() => handleKick(p.socketId)}
+                      className="flex h-8 w-8 items-center justify-center rounded-full bg-black/40 backdrop-blur-sm transition-all hover:bg-red-500 hover:text-white"
+                      title="Remove participant"
+                    >
+                      <UserX className="h-4 w-4" />
+                    </button>
+                  ) : undefined
+                }
+              />
             ))}
           </div>
         </div>
 
-        {/* Right Sidebar - Chat panel */}
+        {/* Mobile backdrop */}
+        {sidebarOpen && (
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+            aria-label="Close panel"
+            onClick={() => {
+              setShowChat(false);
+              setShowParticipantsList(false);
+            }}
+          />
+        )}
+
+        {/* Chat panel */}
         {showChat && (
-          <div className="w-80 md:w-96 bg-[#2d2e30] rounded-2xl flex flex-col border border-white/10 shadow-2xl animate-slide-in">
+          <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-white/10 bg-[#2d2e30] shadow-2xl sm:max-w-sm lg:static lg:z-auto lg:max-h-full lg:w-80 lg:max-w-none lg:rounded-2xl lg:border lg:border-white/10 xl:w-96">
             <div className="p-4 border-b border-white/10 flex justify-between items-center">
               <h2 className="font-medium text-sm flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-[#8ab4f8]" /> In-call Messages
@@ -939,9 +893,9 @@ export default function MeetingRoom() {
           </div>
         )}
 
-        {/* Right Sidebar - Participants list */}
+        {/* Participants panel */}
         {showParticipantsList && (
-          <div className="w-80 md:w-96 bg-[#2d2e30] rounded-2xl flex flex-col border border-white/10 shadow-2xl animate-slide-in">
+          <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md flex-col border-l border-white/10 bg-[#2d2e30] shadow-2xl sm:max-w-sm lg:static lg:z-auto lg:max-h-full lg:w-80 lg:max-w-none lg:rounded-2xl lg:border lg:border-white/10 xl:w-96">
             <div className="p-4 border-b border-white/10 flex justify-between items-center">
               <h2 className="font-medium text-sm flex items-center gap-2">
                 <Users className="h-4 w-4 text-[#8ab4f8]" /> People ({totalConferencingUsers})
@@ -958,7 +912,7 @@ export default function MeetingRoom() {
               <div className="flex justify-between items-center p-3 rounded-xl bg-white/5 border border-white/5">
                 <div className="flex items-center gap-3">
                   <MeetAvatar
-                    name={resolvedDisplayName}
+                    displayName={resolvedDisplayName}
                     email={isAuthenticated ? identity.email : undefined}
                     image={isAuthenticated ? identity.image : undefined}
                     size="sm"
@@ -986,7 +940,7 @@ export default function MeetingRoom() {
                 <div key={p.socketId} className="flex justify-between items-center p-3 rounded-xl hover:bg-white/5 transition-colors">
                   <div className="flex items-center gap-3">
                     <MeetAvatar
-                      name={p.displayName}
+                      displayName={p.displayName}
                       email={p.email}
                       image={p.image}
                       size="sm"
@@ -1025,20 +979,20 @@ export default function MeetingRoom() {
         )}
       </div>
 
-      {/* Control Actions Bar */}
-      <div className="h-24 bg-[#202124] flex items-center justify-between px-6 border-t border-white/5 relative z-40">
-        {/* Time and room details */}
-        <div className="hidden sm:flex flex-col text-sm font-light text-white/60">
+      {/* Control bar */}
+      <div className="relative z-40 flex h-[72px] shrink-0 items-center justify-between border-t border-white/5 bg-[#202124] px-2 sm:h-20 sm:px-4 md:px-6">
+        <div className="hidden min-w-0 flex-col text-xs font-light text-white/60 sm:flex sm:text-sm">
           <span>{currentTime}</span>
-          <span className="text-xs text-[#8ab4f8] mt-1 font-mono tracking-wider">{meetingCode}</span>
+          <span className="mt-0.5 truncate font-mono text-[10px] tracking-wider text-[#8ab4f8] sm:text-xs">
+            {meetingCode}
+          </span>
         </div>
 
-        {/* Media Buttons */}
-        <div className="flex items-center gap-3 mx-auto">
+        <div className="mx-auto flex max-w-full items-center gap-1.5 overflow-x-auto px-1 py-1 sm:gap-2 md:gap-3 [&::-webkit-scrollbar]:hidden">
           {/* Audio */}
           <button
             onClick={handleToggleMic}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-12 sm:w-12 ${
               isMicOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
             }`}
             title={isMicOn ? "Mute Microphone" : "Unmute Microphone"}
@@ -1060,7 +1014,7 @@ export default function MeetingRoom() {
           {/* Screen Share */}
           <button
             onClick={handleToggleScreenShare}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-12 sm:w-12 ${
               isScreenSharing ? "bg-[#8ab4f8] text-[#202124] hover:bg-[#a8c7fa]" : "bg-[#3c4043] hover:bg-[#4f5357]"
             }`}
             title={isScreenSharing ? "Stop sharing screen" : "Share entire screen"}
@@ -1072,7 +1026,7 @@ export default function MeetingRoom() {
           <div className="relative" ref={emojiRef}>
             <button
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-12 sm:w-12 ${
                 showEmojiPicker ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
               }`}
               title="Send a reaction"
@@ -1097,7 +1051,7 @@ export default function MeetingRoom() {
           {/* Raise Hand */}
           <button
             onClick={() => setIsHandRaised(!isHandRaised)}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
+            className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors sm:h-12 sm:w-12 ${
               isHandRaised ? "bg-yellow-400 text-black hover:bg-yellow-500" : "bg-[#3c4043] hover:bg-[#4f5357]"
             }`}
             title="Raise hand"
@@ -1108,7 +1062,7 @@ export default function MeetingRoom() {
           {/* End Call / Leave room */}
           <button
             onClick={handleLeaveMeeting}
-            className="h-12 px-6 rounded-full bg-red-500 hover:bg-red-600 transition-colors flex items-center justify-center gap-2 font-medium"
+            className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-red-500 px-4 font-medium transition-colors hover:bg-red-600 sm:h-12 sm:px-6"
             title="Leave call"
           >
             <Phone className="h-5 w-5 rotate-[135deg]" />
@@ -1116,15 +1070,14 @@ export default function MeetingRoom() {
           </button>
         </div>
 
-        {/* Sidebar Toggles */}
-        <div className="flex items-center gap-2 text-white/70">
+        <div className="flex shrink-0 items-center gap-0.5 text-white/70 sm:gap-1">
           {/* Info toggle */}
           <button
             onClick={() => {
               setParticipantLeftMessage(`Meeting Link: ${window.location.origin}/meeting/${meetingCode}`);
               setTimeout(() => setParticipantLeftMessage(null), 5000);
             }}
-            className="h-11 w-11 rounded-full hover:bg-white/5 flex items-center justify-center transition-colors"
+            className="flex h-9 w-9 items-center justify-center rounded-full transition-colors hover:bg-white/5 sm:h-11 sm:w-11"
             title="Meeting details"
           >
             <Info className="h-5 w-5" />

@@ -4,25 +4,39 @@ import { Suspense } from 'react';
 import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
+function safeReturnPath(value: string | null): string {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) {
+    return '/dashboard';
+  }
+  return value;
+}
+
 function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
   useEffect(() => {
     const token = searchParams.get('token');
-    const user = searchParams.get('user');
+    const userParam = searchParams.get('user');
     const error = searchParams.get('error');
+    const returnTo = safeReturnPath(searchParams.get('returnTo'));
 
     if (token) {
       localStorage.setItem('authToken', token);
-      if (user) {
+      if (userParam) {
         try {
-          localStorage.setItem('user', user);
+          const decoded = decodeURIComponent(userParam);
+          const user = JSON.parse(decoded);
+          localStorage.setItem('user', JSON.stringify(user));
         } catch {
-          // Ignore malformed user payloads; token auth still succeeds.
+          try {
+            localStorage.setItem('user', userParam);
+          } catch {
+            // ignore
+          }
         }
       }
-      router.replace('/dashboard');
+      router.replace(returnTo);
       return;
     }
 
@@ -30,8 +44,8 @@ function AuthCallbackContent() {
   }, [router, searchParams]);
 
   return (
-    <main className="min-h-screen bg-background flex items-center justify-center">
-      <p className="text-sm text-[#5F6368]">Signing you in...</p>
+    <main className="min-h-screen bg-[#202124] flex items-center justify-center">
+      <p className="text-sm text-white/70">Signing you in...</p>
     </main>
   );
 }
@@ -40,8 +54,8 @@ export default function AuthCallbackPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-background flex items-center justify-center">
-          <p className="text-sm text-[#5F6368]">Signing you in...</p>
+        <main className="min-h-screen bg-[#202124] flex items-center justify-center">
+          <p className="text-sm text-white/70">Signing you in...</p>
         </main>
       }
     >

@@ -4,15 +4,25 @@ export type UserIdentity = {
   image?: string;
 };
 
+/** Visible name on video tiles and overlays (never prefer email). */
+export function getParticipantName(identity: {
+  displayName?: string | null;
+  email?: string | null;
+}): string {
+  const name = identity.displayName?.trim();
+  if (name) return name;
+  if (identity.email?.trim()) {
+    return identity.email.split("@")[0];
+  }
+  return "Guest";
+}
+
+/** @deprecated Use getParticipantName for UI labels */
 export function getIdentityLabel(identity: {
   displayName?: string | null;
   email?: string | null;
 }): string {
-  return (
-    identity.email?.trim() ||
-    identity.displayName?.trim() ||
-    "Signed-in user"
-  );
+  return getParticipantName(identity);
 }
 
 function getEmailFromToken(): string | undefined {
@@ -22,11 +32,11 @@ function getEmailFromToken(): string | undefined {
     if (!payload) return undefined;
 
     const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
-    const decoded = JSON.parse(atob(padded)) as {
-      email?: string;
-    };
-
+    const padded = base64.padEnd(
+      base64.length + ((4 - (base64.length % 4)) % 4),
+      "="
+    );
+    const decoded = JSON.parse(atob(padded)) as { email?: string };
     return decoded.email?.trim() || undefined;
   } catch {
     return undefined;
@@ -35,14 +45,17 @@ function getEmailFromToken(): string | undefined {
 
 export function getCurrentUserIdentity(): UserIdentity {
   if (typeof window === "undefined") {
-    return { displayName: "Signed-in user" };
+    return { displayName: "Guest" };
   }
 
   try {
     const raw = localStorage.getItem("user");
     if (!raw) {
       const email = getEmailFromToken();
-      return { displayName: email || "Signed-in user", email };
+      return {
+        displayName: email ? email.split("@")[0] : "Guest",
+        email,
+      };
     }
 
     const user = JSON.parse(raw) as {
@@ -55,7 +68,9 @@ export function getCurrentUserIdentity(): UserIdentity {
 
     const email = user.email?.trim() || undefined;
     const displayName =
-      user.name?.trim() || user.displayName?.trim() || email || "Signed-in user";
+      user.name?.trim() ||
+      user.displayName?.trim() ||
+      (email ? email.split("@")[0] : "Guest");
 
     return {
       displayName,
@@ -63,7 +78,7 @@ export function getCurrentUserIdentity(): UserIdentity {
       image: user.image || user.picture || undefined,
     };
   } catch {
-    return { displayName: "Signed-in user" };
+    return { displayName: "Guest" };
   }
 }
 
@@ -71,6 +86,11 @@ export function getDisplayName(): string {
   return getCurrentUserIdentity().displayName;
 }
 
-export function getDisplayInitial(name: string): string {
-  return name.trim().charAt(0).toUpperCase() || "?";
+export function getDisplayInitial(label: string): string {
+  return label.trim().charAt(0).toUpperCase() || "?";
+}
+
+export function isUserAuthenticated(): boolean {
+  if (typeof window === "undefined") return false;
+  return Boolean(localStorage.getItem("authToken"));
 }
