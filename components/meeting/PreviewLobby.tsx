@@ -18,6 +18,9 @@ type PreviewLobbyProps = {
   onToggleMic: () => void;
   onToggleCamera: () => void;
   onJoinNow: () => void;
+  isAuthenticated: boolean;
+  customDisplayName: string;
+  onCustomDisplayNameChange: (name: string) => void;
 };
 
 export function PreviewLobby({
@@ -33,8 +36,11 @@ export function PreviewLobby({
   onToggleMic,
   onToggleCamera,
   onJoinNow,
+  isAuthenticated,
+  customDisplayName,
+  onCustomDisplayNameChange,
 }: PreviewLobbyProps) {
-  const label = email || displayName;
+  const label = email || displayName || (isAuthenticated ? "Signed-in user" : "Guest");
   const initial = getDisplayInitial(label);
 
   return (
@@ -111,13 +117,30 @@ export function PreviewLobby({
             </button>
           </div>
 
+          {!isAuthenticated && (
+            <div className="w-full flex flex-col gap-2">
+              <label htmlFor="displayNameInput" className="text-left text-xs font-semibold text-white/70 uppercase tracking-wider">
+                Your Display Name
+              </label>
+              <input
+                id="displayNameInput"
+                type="text"
+                value={customDisplayName}
+                onChange={(e) => onCustomDisplayNameChange(e.target.value)}
+                placeholder="Enter your name to join"
+                className="w-full bg-[#3c4043]/50 border border-white/10 hover:border-white/30 focus:border-[#8ab4f8] focus:bg-[#3c4043] rounded-lg px-4 py-3 text-sm text-white placeholder-white/40 outline-none transition duration-150 ease-in-out shadow-sm"
+                maxLength={40}
+              />
+            </div>
+          )}
+
           {mediaError && (
             <p className="text-sm text-red-400 w-full">{mediaError}</p>
           )}
 
           <Button
             onClick={onJoinNow}
-            disabled={isJoining || !!mediaError}
+            disabled={isJoining || !!mediaError || (!isAuthenticated && !customDisplayName.trim())}
             className="rounded-full px-8 py-6 text-base font-medium text-[#202124] hover:opacity-90 disabled:opacity-50"
             style={{ backgroundColor: "#8ab4f8" }}
           >

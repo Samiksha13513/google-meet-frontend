@@ -94,6 +94,7 @@ export class MeetingPeerSession {
     displayName: string;
     email?: string;
     image?: string;
+    token?: string;
     isMicOn?: boolean;
     isCameraOn?: boolean;
   }): Promise<void> {
@@ -355,6 +356,7 @@ export class MeetingPeerSession {
     // 2. Mesh participant joins/leaves
     this.socket.on("participant-joined", (details: MeetingMember) => {
       console.log("[WebRTC:Mesh] participant-joined event from:", details.socketId);
+      if (details.socketId === this.socket.id) return;
       // Wait for their offer - we don't start the peer connection here to avoid simultaneous double connections
       this.remoteDisplayNames.set(details.socketId, details.displayName);
       this.remoteDetails.set(details.socketId, details);
@@ -363,12 +365,14 @@ export class MeetingPeerSession {
 
     this.socket.on("participant-left", (data: { socketId: string }) => {
       console.log("[WebRTC:Mesh] participant-left event from:", data.socketId);
+      if (data.socketId === this.socket.id) return;
       this.removePeer(data.socketId);
     });
 
     // 3. WebRTC mesh signaling
     this.socket.on("offer", async (data: { offer: RTCSessionDescriptionInit, senderId: string }) => {
       console.log(`[WebRTC:Mesh] Offer received from ← ${data.senderId}`);
+      if (data.senderId === this.socket.id) return;
       const knownDetails = this.remoteDetails.get(data.senderId);
       const displayName =
         this.remoteDisplayNames.get(data.senderId) ||
@@ -397,6 +401,7 @@ export class MeetingPeerSession {
 
     this.socket.on("answer", async (data: { answer: RTCSessionDescriptionInit, senderId: string }) => {
       console.log(`[WebRTC:Mesh] Answer received from ← ${data.senderId}`);
+      if (data.senderId === this.socket.id) return;
       const peer = this.peers.get(data.senderId);
       if (!peer) return;
 
@@ -409,6 +414,7 @@ export class MeetingPeerSession {
     });
 
     this.socket.on("ice-candidate", async (data: { candidate: RTCIceCandidateInit, senderId: string }) => {
+      if (data.senderId === this.socket.id) return;
       const peer = this.peers.get(data.senderId);
       if (!peer) return;
 

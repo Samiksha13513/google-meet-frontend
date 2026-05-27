@@ -159,6 +159,15 @@ export default function MeetingRoom() {
   const [meetingState, setMeetingState] = useState<MeetingState>("lobby");
   const [identity] = useState<UserIdentity>(() => getCurrentUserIdentity());
   const displayName = getIdentityLabel(identity);
+
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [customDisplayName, setCustomDisplayName] = useState("");
+
+  useEffect(() => {
+    setIsAuthenticated(!!localStorage.getItem("authToken"));
+  }, []);
+
+  const resolvedDisplayName = isAuthenticated ? displayName : (customDisplayName || "Guest");
   
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCameraOn, setIsCameraOn] = useState(true);
@@ -292,7 +301,7 @@ export default function MeetingRoom() {
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!chatInput.trim()) return;
-    sessionRef.current?.sendChatMessage(chatInput.trim(), displayName);
+    sessionRef.current?.sendChatMessage(chatInput.trim(), resolvedDisplayName);
     setChatInput("");
   };
 
@@ -351,18 +360,20 @@ export default function MeetingRoom() {
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
         
-        // Add existing members
+        // Add existing members (excluding local user)
         setParticipants(
-          members.map((m) => ({
-            socketId: m.socketId,
-            displayName: getIdentityLabel(m),
-            email: m.email,
-            image: m.image,
-            isMicOn: m.isMicOn,
-            isCameraOn: m.isCameraOn,
-            isHost: m.isHost,
-            isScreenSharing: m.isScreenSharing || false,
-          }))
+          members
+            .filter((m) => m.socketId !== socket.id)
+            .map((m) => ({
+              socketId: m.socketId,
+              displayName: getIdentityLabel(m),
+              email: m.email,
+              image: m.image,
+              isMicOn: m.isMicOn,
+              isCameraOn: m.isCameraOn,
+              isHost: m.isHost,
+              isScreenSharing: m.isScreenSharing || false,
+            }))
         );
       },
       onJoinDenied: (reason) => {
@@ -370,6 +381,7 @@ export default function MeetingRoom() {
         setMeetingState("denied");
       },
       onRemoteStreamAdded: (socketId, remoteStream, remoteName, remoteDetails) => {
+        if (socketId === socket.id) return;
         setParticipants((prev) => {
           const exists = prev.find((p) => p.socketId === socketId);
           if (exists) {
@@ -415,6 +427,7 @@ export default function MeetingRoom() {
         setParticipants((prev) => prev.filter((p) => p.socketId !== socketId));
       },
       onRemoteStatusChanged: (data) => {
+        if (data.socketId === socket.id) return;
         setParticipants((prev) =>
           prev.map((p) =>
             p.socketId === data.socketId
@@ -448,6 +461,7 @@ export default function MeetingRoom() {
         });
       },
       onParticipantJoined: (member) => {
+        if (member.socketId === socket.id) return;
         setParticipants((prev) => {
           if (prev.some((p) => p.socketId === member.socketId)) {
             return prev.map((p) =>
@@ -507,11 +521,13 @@ export default function MeetingRoom() {
         triggerFloatingReaction(data.emoji, name);
       },
       onScreenShareStarted: (senderId) => {
+        if (senderId === socket.id) return;
         setParticipants((prev) =>
           prev.map((p) => (p.socketId === senderId ? { ...p, isScreenSharing: true } : p))
         );
       },
       onScreenShareStopped: (senderId) => {
+        if (senderId === socket.id) return;
         setParticipants((prev) =>
           prev.map((p) => (p.socketId === senderId ? { ...p, isScreenSharing: false } : p))
         );
@@ -523,9 +539,14 @@ export default function MeetingRoom() {
       },
     });
 
+    const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
+
     sessionRef.current = session;
     await session.start({
-      ...identity,
+      displayName: isAuthenticated ? displayName : customDisplayName,
+      email: isAuthenticated ? identity.email : undefined,
+      image: isAuthenticated ? identity.image : undefined,
+      token: token || undefined,
       isMicOn,
       isCameraOn,
     });
@@ -632,9 +653,9 @@ export default function MeetingRoom() {
     return (
       <PreviewLobby
         meetingCode={meetingCode ?? ""}
-        displayName={displayName}
-        email={identity.email}
-        image={identity.image}
+        displayName={resolvedDisplayName}
+        email={isAuthenticated ? identity.email : undefined}
+        image={isAuthenticated ? identity.image : undefined}
         videoRef={localVideoRef}
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
@@ -643,6 +664,9 @@ export default function MeetingRoom() {
         onToggleMic={handleToggleMic}
         onToggleCamera={handleToggleCamera}
         onJoinNow={handleJoinNow}
+        isAuthenticated={isAuthenticated}
+        customDisplayName={customDisplayName}
+        onCustomDisplayNameChange={setCustomDisplayName}
       />
     );
   }
@@ -653,16 +677,16 @@ export default function MeetingRoom() {
         <div className="relative flex items-center justify-center">
           <div className="absolute h-28 w-28 rounded-full border-4 border-[#8ab4f8] animate-ping" />
           <MeetAvatar
-            name={displayName}
-            email={identity.email}
-            image={identity.image}
+            name={resolvedDisplayName}
+            email={isAuthenticated ? identity.email : undefined}
+            image={isAuthenticated ? identity.image : undefined}
             size="xl"
           />
         </div>
         <h1 className="text-3xl font-light">Asking to join...</h1>
         <div className="max-w-xs text-center">
-          <p className="truncate text-sm text-white">{displayName}</p>
-          {identity.email && (
+          <p className="truncate text-sm text-white">{resolvedDisplayName}</p>
+          {isAuthenticated && identity.email && (
             <p className="mt-1 truncate text-xs text-white/55">{identity.email}</p>
           )}
         </div>
@@ -792,19 +816,19 @@ export default function MeetingRoom() {
               ) : (
                 <div className="flex flex-col items-center gap-4">
                   <MeetAvatar
-                    name={displayName}
-                    email={identity.email}
-                    image={identity.image}
+                    name={resolvedDisplayName}
+                    email={isAuthenticated ? identity.email : undefined}
+                    image={isAuthenticated ? identity.image : undefined}
                     size="xl"
                   />
                   <div className="max-w-[70%] truncate text-sm text-white/70">
-                    {identity.email || displayName}
+                    {(isAuthenticated && identity.email) || resolvedDisplayName}
                   </div>
                 </div>
               )}
               {/* Badges */}
               <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10">
-                <span className="max-w-[120px] truncate">{displayName} (You)</span>
+                <span className="max-w-[120px] truncate">{resolvedDisplayName} (You)</span>
                 {isHost && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
                 {!isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
               </div>
@@ -934,15 +958,15 @@ export default function MeetingRoom() {
               <div className="flex justify-between items-center p-3 rounded-xl bg-white/5 border border-white/5">
                 <div className="flex items-center gap-3">
                   <MeetAvatar
-                    name={displayName}
-                    email={identity.email}
-                    image={identity.image}
+                    name={resolvedDisplayName}
+                    email={isAuthenticated ? identity.email : undefined}
+                    image={isAuthenticated ? identity.image : undefined}
                     size="sm"
                   />
                   <div className="min-w-0">
-                    <h4 className="truncate text-sm font-medium">{displayName} (You)</h4>
+                    <h4 className="truncate text-sm font-medium">{resolvedDisplayName} (You)</h4>
                     <span className="block truncate text-[10px] text-white/50">
-                      {identity.email || (isHost ? "Meeting host" : "In the meeting")}
+                      {(isAuthenticated && identity.email) || (isHost ? "Meeting host" : "In the meeting")}
                     </span>
                     {isHost && (
                       <span className="mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium text-yellow-300 bg-yellow-400/10">
