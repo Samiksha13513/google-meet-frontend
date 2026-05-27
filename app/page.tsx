@@ -46,7 +46,7 @@ export default function Home() {
               Try Meet for work
             </Button>
          <Button
-          onClick={() => googleLogin()}
+          onClick={googleLogin}
           className="rounded-full text-white px-8 py-3 text-base h-auto"
           style={{ backgroundColor: '#1a73e8' }}
         >
@@ -87,7 +87,7 @@ export default function Home() {
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 mt-4 items-start sm:items-center">
              <Button
-            onClick={() => googleLogin()}
+            onClick={googleLogin}
             className="rounded-full text-white py-2 px-6 h-auto text-sm"
             style={{ backgroundColor: '#1a73e8' }}
           >
