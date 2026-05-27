@@ -17,7 +17,8 @@ function AuthCallbackContent() {
       localStorage.setItem('authToken', token);
       if (user) {
         try {
-          localStorage.setItem('user', user);
+          const decodedUser = decodeURIComponent(user);
+          localStorage.setItem('user', decodedUser);
         } catch {
           // Ignore malformed user payloads; token auth still succeeds.
         }
