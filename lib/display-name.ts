@@ -15,31 +15,22 @@ export function getIdentityLabel(identity: {
   );
 }
 
-function getTokenData(): { email?: string; name?: string } {
+function getEmailFromToken(): string | undefined {
   try {
     const token = localStorage.getItem("authToken");
     const payload = token?.split(".")[1];
-    if (!payload) return {};
+    if (!payload) return undefined;
 
     const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
     const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
     const decoded = JSON.parse(atob(padded)) as {
       email?: string;
-      name?: string;
     };
 
-    return decoded;
+    return decoded.email?.trim() || undefined;
   } catch {
-    return {};
+    return undefined;
   }
-}
-
-function getEmailFromToken(): string | undefined {
-  return getTokenData().email?.trim() || undefined;
-}
-
-function getNameFromToken(): string | undefined {
-  return getTokenData().name?.trim() || undefined;
 }
 
 export function getCurrentUserIdentity(): UserIdentity {
@@ -50,11 +41,8 @@ export function getCurrentUserIdentity(): UserIdentity {
   try {
     const raw = localStorage.getItem("user");
     if (!raw) {
-      // Fallback to JWT token data if user not in localStorage
-      const tokenEmail = getEmailFromToken();
-      const tokenName = getNameFromToken();
-      const displayName = tokenName || tokenEmail || "Signed-in user";
-      return { displayName, email: tokenEmail };
+      const email = getEmailFromToken();
+      return { displayName: email || "Signed-in user", email };
     }
 
     const user = JSON.parse(raw) as {
@@ -66,10 +54,8 @@ export function getCurrentUserIdentity(): UserIdentity {
     };
 
     const email = user.email?.trim() || undefined;
-    const nameFromStorage = user.name?.trim() || user.displayName?.trim();
-    const tokenName = getNameFromToken();
     const displayName =
-      nameFromStorage || tokenName || email || "Signed-in user";
+      user.name?.trim() || user.displayName?.trim() || email || "Signed-in user";
 
     return {
       displayName,
