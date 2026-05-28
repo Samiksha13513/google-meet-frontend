@@ -740,16 +740,15 @@ export default function MeetingRoom() {
     );
   }
 
-  // Calculate Responsive Grid layouts
+  // Responsive grid sizing (Google Meet-like): auto-fit tiles without horizontal overflow.
+  // UI-only: does not affect any meeting logic.
   const totalConferencingUsers = participants.length + 1; // Participants + local user
-  let gridCols = "grid-cols-1";
-  if (totalConferencingUsers === 2) gridCols = "grid-cols-1 md:grid-cols-2";
-  else if (totalConferencingUsers <= 4) gridCols = "grid-cols-2";
-  else if (totalConferencingUsers <= 6) gridCols = "grid-cols-2 md:grid-cols-3";
-  else gridCols = "grid-cols-3 md:grid-cols-4";
+  const gridStyle: React.CSSProperties = {
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
+  };
 
   return (
-    <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden overflow-x-hidden">
+    <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
       {/* Floating Join Request Modal (Host only) */}
       {isHost && joinRequests.length > 0 && (
         <div className="absolute right-4 top-4 z-50 w-[min(360px,calc(100vw-32px))] rounded-2xl border border-white/10 bg-[#2d2e30] p-4 shadow-2xl animate-fade-in">
@@ -802,13 +801,14 @@ export default function MeetingRoom() {
       </div>
 
       {/* Main Grid View */}
-      <div className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 min-h-0 min-w-0">
-        <div className="flex-1 flex flex-col justify-center min-w-0">
+      <div className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 min-h-0">
+        <div className="flex-1 flex flex-col justify-center">
           <div
-            className={`grid ${gridCols} auto-rows-fr items-stretch gap-2 sm:gap-4 w-full max-w-7xl mx-auto h-full p-1 sm:p-2 overflow-y-auto overflow-x-hidden overscroll-contain min-w-0`}
+            style={gridStyle}
+            className="grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full max-w-7xl mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden"
           >
             {/* 1. Local Participant Card */}
-            <div className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video min-w-0">
+            <div className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video">
               {isCameraOn ? (
                 <video
                   ref={localVideoRef}
@@ -833,8 +833,8 @@ export default function MeetingRoom() {
                 </div>
               )}
               {/* Badges */}
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10 max-w-[80%]">
-                <span className="max-w-[140px] truncate">{resolvedDisplayName} (You)</span>
+              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10">
+                <span className="max-w-[120px] truncate">{resolvedDisplayName} (You)</span>
                 {isHost && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
                 {!isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
               </div>
@@ -844,7 +844,7 @@ export default function MeetingRoom() {
             {participants.map((p) => (
               <div
                 key={p.socketId}
-                className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video min-w-0"
+                className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video"
               >
                 {p.stream && p.isCameraOn ? (
                   <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
