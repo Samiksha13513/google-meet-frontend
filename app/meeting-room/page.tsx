@@ -819,11 +819,11 @@ export default function MeetingRoom() {
               // Center content like Meet
               "place-content-center",
               // Two-up special case
-              isTwoUp ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]" : "max-w-7xl 2xl:max-w-[1600px]",
+              isTwoUp ? "grid-cols-1 md:grid-cols-2 md:grid-rows-1 max-w-[1600px]" : "max-w-7xl 2xl:max-w-[1600px]",
             ].join(" ")}
           >
             {/* 1. Local Participant Card */}
-            <div className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video">
+            <div className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video md:aspect-auto md:h-full">
               {isCameraOn ? (
                 <video
                   ref={localVideoRef}
@@ -859,7 +859,7 @@ export default function MeetingRoom() {
             {participants.map((p) => (
               <div
                 key={p.socketId}
-                className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video"
+                className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video md:aspect-auto md:h-full"
               >
                 {p.stream && p.isCameraOn ? (
                   <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
