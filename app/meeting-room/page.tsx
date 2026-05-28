@@ -743,8 +743,16 @@ export default function MeetingRoom() {
   // Responsive grid sizing (Google Meet-like): auto-fit tiles without horizontal overflow.
   // UI-only: does not affect any meeting logic.
   const totalConferencingUsers = participants.length + 1; // Participants + local user
+  const minTilePx =
+    totalConferencingUsers <= 2
+      ? 520
+      : totalConferencingUsers <= 4
+        ? 420
+        : totalConferencingUsers <= 6
+          ? 340
+          : 280;
   const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
+    gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
   };
 
   return (
@@ -805,7 +813,7 @@ export default function MeetingRoom() {
         <div className="flex-1 flex flex-col justify-center">
           <div
             style={gridStyle}
-            className="grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full max-w-7xl mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden"
+            className="grid auto-rows-fr items-stretch place-content-center gap-2 sm:gap-4 w-full max-w-7xl 2xl:max-w-[1600px] mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden"
           >
             {/* 1. Local Participant Card */}
             <div className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video">
