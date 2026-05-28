@@ -184,7 +184,7 @@ export function PreviewLobby({
             className="rounded-full px-8 py-6 text-base font-medium text-[#202124] hover:opacity-90 disabled:opacity-50"
             style={{ backgroundColor: "#8ab4f8" }}
           >
-            {isJoining ? "Joining..." : "Join now"}
+            {isJoining ? "Joining..." : "Ask to join"}
           </Button>
         </div>
       </main>

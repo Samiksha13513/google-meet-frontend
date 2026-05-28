@@ -9,6 +9,7 @@ type MeetingMember = {
   isMicOn: boolean;
   isCameraOn: boolean;
   isScreenSharing?: boolean;
+  isHandRaised?: boolean;
   isHost: boolean;
 };
 
@@ -45,6 +46,7 @@ export type MeetingSessionCallbacks = {
     socketId: string;
     isMicOn: boolean;
     isCameraOn: boolean;
+    isHandRaised?: boolean;
     displayName?: string;
     email?: string;
     image?: string;
@@ -56,6 +58,7 @@ export type MeetingSessionCallbacks = {
   onEmojiReaction?: (data: EmojiPayload) => void;
   onScreenShareStarted?: (senderId: string) => void;
   onScreenShareStopped?: (senderId: string) => void;
+  onHandRaisedChanged?: (data: { senderId: string; isHandRaised: boolean }) => void;
   onKicked?: () => void;
 };
 
@@ -197,6 +200,13 @@ export class MeetingPeerSession {
       roomId: this.roomId,
       isMicOn,
       isCameraOn,
+    });
+  }
+
+  sendRaiseHandUpdate(isHandRaised: boolean): void {
+    this.socket.emit("raise-hand", {
+      roomId: this.roomId,
+      isHandRaised,
     });
   }
 
@@ -461,10 +471,15 @@ export class MeetingPeerSession {
       this.callbacks.onScreenShareStopped?.(data.senderId);
     });
 
+    this.socket.on("raise-hand-changed", (data: { senderId: string; isHandRaised: boolean }) => {
+      this.callbacks.onHandRaisedChanged?.(data);
+    });
+
     this.socket.on("participant-status-changed", (data: {
       socketId: string;
       isMicOn: boolean;
       isCameraOn: boolean;
+      isHandRaised?: boolean;
       displayName?: string;
       email?: string;
       image?: string;
@@ -490,6 +505,7 @@ export class MeetingPeerSession {
     this.socket.off("emoji-reaction");
     this.socket.off("screen-share-started");
     this.socket.off("screen-share-stopped");
+    this.socket.off("raise-hand-changed");
     this.socket.off("participant-status-changed");
   }
 

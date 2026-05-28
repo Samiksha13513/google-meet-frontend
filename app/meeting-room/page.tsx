@@ -51,6 +51,7 @@ type Participant = {
   stream?: MediaStream;
   isMicOn: boolean;
   isCameraOn: boolean;
+  isHandRaised?: boolean;
   isHost: boolean;
   isScreenSharing: boolean;
 };
@@ -163,7 +164,7 @@ export default function MeetingRoom() {
   const displaySecondary = getIdentitySecondary(identity);
 
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [customDisplayName, setCustomDisplayName] = useState("");
+  const [customDisplayName, setCustomDisplayName] = useState("Guest");
 
   useEffect(() => {
     setIsAuthenticated(!!localStorage.getItem("authToken"));
@@ -196,6 +197,8 @@ export default function MeetingRoom() {
   const [showChat, setShowChat] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [showParticipantsList, setShowParticipantsList] = useState(false);
+  const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
+  const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
 
   // Reaction picker & anims
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -207,6 +210,7 @@ export default function MeetingRoom() {
   const sessionRef = useRef<MeetingPeerSession | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const reactionIdRef = useRef(0);
+  const audioLevelsRef = useRef<Record<string, number>>({});
 
   const emojiRef = useRef<HTMLDivElement>(null);
 
@@ -373,6 +377,7 @@ export default function MeetingRoom() {
               image: m.image,
               isMicOn: m.isMicOn,
               isCameraOn: m.isCameraOn,
+              isHandRaised: m.isHandRaised || false,
               isHost: m.isHost,
               isScreenSharing: m.isScreenSharing || false,
             }))
@@ -400,6 +405,7 @@ export default function MeetingRoom() {
                     }),
                     isMicOn: remoteDetails?.isMicOn ?? p.isMicOn,
                     isCameraOn: remoteDetails?.isCameraOn ?? p.isCameraOn,
+                    isHandRaised: remoteDetails?.isHandRaised ?? p.isHandRaised,
                     isHost: remoteDetails?.isHost ?? p.isHost,
                   }
                 : p
@@ -418,6 +424,7 @@ export default function MeetingRoom() {
                 stream: remoteStream,
                 isMicOn: remoteDetails?.isMicOn ?? true,
                 isCameraOn: remoteDetails?.isCameraOn ?? true,
+                isHandRaised: remoteDetails?.isHandRaised ?? false,
                 isHost: remoteDetails?.isHost ?? false,
                 isScreenSharing: false,
               },
@@ -437,6 +444,7 @@ export default function MeetingRoom() {
                   ...p,
                   isMicOn: data.isMicOn,
                   isCameraOn: data.isCameraOn,
+                  isHandRaised: data.isHandRaised ?? p.isHandRaised,
                   displayName: getIdentityLabel({
                     displayName: data.displayName || p.displayName,
                     email: data.email || p.email,
@@ -475,6 +483,7 @@ export default function MeetingRoom() {
                     image: member.image || p.image,
                     isMicOn: member.isMicOn,
                     isCameraOn: member.isCameraOn,
+                    isHandRaised: member.isHandRaised || false,
                     isHost: member.isHost,
                     isScreenSharing: member.isScreenSharing || false,
                   }
@@ -491,6 +500,7 @@ export default function MeetingRoom() {
               image: member.image,
               isMicOn: member.isMicOn,
               isCameraOn: member.isCameraOn,
+              isHandRaised: member.isHandRaised || false,
               isHost: member.isHost,
               isScreenSharing: member.isScreenSharing || false,
             },
@@ -524,14 +534,23 @@ export default function MeetingRoom() {
       },
       onScreenShareStarted: (senderId) => {
         if (senderId === socket.id) return;
+        setPinnedParticipantId(senderId);
         setParticipants((prev) =>
           prev.map((p) => (p.socketId === senderId ? { ...p, isScreenSharing: true } : p))
         );
       },
       onScreenShareStopped: (senderId) => {
         if (senderId === socket.id) return;
+        setPinnedParticipantId((prev) => (prev === senderId ? null : prev));
         setParticipants((prev) =>
           prev.map((p) => (p.socketId === senderId ? { ...p, isScreenSharing: false } : p))
+        );
+      },
+      onHandRaisedChanged: ({ senderId, isHandRaised }) => {
+        setParticipants((prev) =>
+          prev.map((p) =>
+            p.socketId === senderId ? { ...p, isHandRaised } : p
+          )
         );
       },
       onKicked: () => {
@@ -629,6 +648,70 @@ export default function MeetingRoom() {
       localVideoRef.current.srcObject = stream;
     }
   }, [meetingState, isCameraOn]);
+
+  // Active speaker detection (UI-only; no signaling flow changes)
+  useEffect(() => {
+    if (meetingState !== "inMeeting") return;
+    if (typeof window === "undefined") return;
+
+    const AudioCtx =
+      window.AudioContext ||
+      (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+
+    const ctx = new AudioCtx();
+    const cleanupFns: Array<() => void> = [];
+
+    const monitorStream = (id: string, stream?: MediaStream | null) => {
+      if (!stream || stream.getAudioTracks().length === 0) return;
+
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      source.connect(analyser);
+
+      const timer = window.setInterval(() => {
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i += 1) sum += data[i];
+        const level = sum / data.length / 255;
+        audioLevelsRef.current[id] = level;
+      }, 220);
+
+      cleanupFns.push(() => {
+        window.clearInterval(timer);
+        try {
+          source.disconnect();
+          analyser.disconnect();
+        } catch {
+          // no-op cleanup
+        }
+        delete audioLevelsRef.current[id];
+      });
+    };
+
+    monitorStream("local", localStreamRef.current);
+    participants.forEach((p) => monitorStream(p.socketId, p.stream));
+
+    const activeTimer = window.setInterval(() => {
+      let maxId: string | null = null;
+      let maxLevel = 0.05;
+      Object.entries(audioLevelsRef.current).forEach(([id, level]) => {
+        if (level > maxLevel) {
+          maxLevel = level;
+          maxId = id;
+        }
+      });
+      setActiveSpeakerId(maxId);
+    }, 320);
+    cleanupFns.push(() => window.clearInterval(activeTimer));
+
+    return () => {
+      cleanupFns.forEach((fn) => fn());
+      void ctx.close().catch(() => {});
+    };
+  }, [participants, meetingState]);
 
   // Cleanup on page close
   useEffect(() => {
@@ -744,6 +827,13 @@ export default function MeetingRoom() {
   // UI-only: does not affect any meeting logic.
   const totalConferencingUsers = participants.length + 1; // Participants + local user
   const isTwoUp = totalConferencingUsers === 2;
+  const orderedParticipants = [...participants].sort((a, b) => {
+    if (a.socketId === pinnedParticipantId) return -1;
+    if (b.socketId === pinnedParticipantId) return 1;
+    if (a.isScreenSharing && !b.isScreenSharing) return -1;
+    if (!a.isScreenSharing && b.isScreenSharing) return 1;
+    return 0;
+  });
 
   // For 2 participants, Google Meet uses a stable 2-up split on desktop (no auto-fit),
   // and stacks on small screens. For 3+ we use auto-fit/minmax.
@@ -827,8 +917,16 @@ export default function MeetingRoom() {
               className={[
                 "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
                 // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
+                pinnedParticipantId === "local"
+                  ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
+                  : "",
+                activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
                 isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
               ].join(" ")}
+              onDoubleClick={() =>
+                setPinnedParticipantId((prev) => (prev === "local" ? null : "local"))
+              }
+              title="Double-click to pin yourself"
             >
               {isCameraOn ? (
                 <video
@@ -857,18 +955,29 @@ export default function MeetingRoom() {
               <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10">
                 <span className="max-w-[120px] truncate">{resolvedDisplayName} (You)</span>
                 {isHost && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
+                {isHandRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
                 {!isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
               </div>
             </div>
 
             {/* 2. Remote Participants Cards */}
-            {participants.map((p) => (
+            {orderedParticipants.map((p) => (
               <div
                 key={p.socketId}
                 className={[
                   "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                  pinnedParticipantId === p.socketId
+                    ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
+                    : "",
+                  activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
                   isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
                 ].join(" ")}
+                onDoubleClick={() =>
+                  setPinnedParticipantId((prev) =>
+                    prev === p.socketId ? null : p.socketId
+                  )
+                }
+                title="Double-click to pin participant"
               >
                 {p.stream && p.isCameraOn ? (
                   <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
@@ -893,6 +1002,7 @@ export default function MeetingRoom() {
                       <Shield className="h-3.5 w-3.5 text-yellow-400" />
                     </span>
                   )}
+                  {p.isHandRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
                   {!p.isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
                 </div>
                 {/* Host Control Actions */}
@@ -1006,6 +1116,7 @@ export default function MeetingRoom() {
                   </div>
                 </div>
                 <div className="flex gap-2 text-white/60">
+                  {isHandRaised && <Hand className="h-4 w-4 text-yellow-300" />}
                   {isMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
                   {isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
                 </div>
@@ -1035,6 +1146,7 @@ export default function MeetingRoom() {
                   </div>
                   <div className="flex gap-3 items-center">
                     <div className="flex gap-2 text-white/40">
+                      {p.isHandRaised && <Hand className="h-4 w-4 text-yellow-300" />}
                       {p.isMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
                       {p.isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
                     </div>
@@ -1126,7 +1238,11 @@ export default function MeetingRoom() {
 
           {/* Raise Hand */}
           <button
-            onClick={() => setIsHandRaised(!isHandRaised)}
+            onClick={() => {
+              const next = !isHandRaised;
+              setIsHandRaised(next);
+              sessionRef.current?.sendRaiseHandUpdate(next);
+            }}
             className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
               isHandRaised ? "bg-yellow-400 text-black hover:bg-yellow-500" : "bg-[#3c4043] hover:bg-[#4f5357]"
             }`}
