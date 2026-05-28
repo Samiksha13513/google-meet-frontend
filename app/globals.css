@@ -29,6 +29,15 @@ body {
   font-family: var(--font-google);
 }
 
+/* Hide scrollbars (Google Meet-like control strip) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE/Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
 @keyframes emojiFloat {
   0% {
     transform: translateY(80vh) scale(0.6);

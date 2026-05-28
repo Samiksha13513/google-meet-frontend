@@ -802,11 +802,13 @@ export default function MeetingRoom() {
       </div>
 
       {/* Main Grid View */}
-      <div className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3">
+      <div className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 min-h-0">
         <div className="flex-1 flex flex-col justify-center">
-          <div className={`grid ${gridCols} gap-2 sm:gap-4 w-full max-w-7xl mx-auto h-full p-1 sm:p-2 overflow-y-auto`}>
+          <div
+            className={`grid ${gridCols} auto-rows-fr items-stretch gap-2 sm:gap-4 w-full max-w-7xl mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain`}
+          >
             {/* 1. Local Participant Card */}
-            <div className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video max-h-[500px]">
+            <div className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video">
               {isCameraOn ? (
                 <video
                   ref={localVideoRef}
@@ -842,7 +844,7 @@ export default function MeetingRoom() {
             {participants.map((p) => (
               <div
                 key={p.socketId}
-                className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video max-h-[500px]"
+                className="relative rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video"
               >
                 {p.stream && p.isCameraOn ? (
                   <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
@@ -886,7 +888,7 @@ export default function MeetingRoom() {
 
         {/* Right Sidebar - Chat panel */}
         {showChat && (
-          <div className="fixed inset-0 z-50 md:static md:inset-auto w-full md:w-96 bg-[#2d2e30] md:rounded-2xl flex flex-col border border-white/10 shadow-2xl animate-slide-in">
+          <div className="fixed inset-0 z-50 md:static md:inset-auto w-full md:w-96 bg-[#2d2e30]/95 backdrop-blur md:bg-[#2d2e30] md:backdrop-blur-0 md:rounded-2xl flex flex-col border border-white/10 shadow-2xl animate-slide-in">
             <div className="p-4 border-b border-white/10 flex justify-between items-center">
               <h2 className="font-medium text-sm flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-[#8ab4f8]" /> In-call Messages
@@ -945,7 +947,7 @@ export default function MeetingRoom() {
 
         {/* Right Sidebar - Participants list */}
         {showParticipantsList && (
-          <div className="fixed inset-0 z-50 md:static md:inset-auto w-full md:w-96 bg-[#2d2e30] md:rounded-2xl flex flex-col border border-white/10 shadow-2xl animate-slide-in">
+          <div className="fixed inset-0 z-50 md:static md:inset-auto w-full md:w-96 bg-[#2d2e30]/95 backdrop-blur md:bg-[#2d2e30] md:backdrop-blur-0 md:rounded-2xl flex flex-col border border-white/10 shadow-2xl animate-slide-in">
             <div className="p-4 border-b border-white/10 flex justify-between items-center">
               <h2 className="font-medium text-sm flex items-center gap-2">
                 <Users className="h-4 w-4 text-[#8ab4f8]" /> People ({totalConferencingUsers})
@@ -1030,7 +1032,7 @@ export default function MeetingRoom() {
       </div>
 
       {/* Control Actions Bar */}
-      <div className="min-h-20 bg-[#202124] flex items-center justify-between px-2 sm:px-6 py-2 border-t border-white/5 relative z-40 gap-2">
+      <div className="min-h-20 bg-[#202124] flex items-center justify-between px-2 sm:px-6 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t border-white/5 relative z-40 gap-2">
         {/* Time and room details */}
         <div className="hidden sm:flex flex-col text-sm font-light text-white/60">
           <span>{currentTime}</span>
@@ -1038,7 +1040,7 @@ export default function MeetingRoom() {
         </div>
 
         {/* Media Buttons */}
-        <div className="flex items-center gap-2 sm:gap-3 mx-auto overflow-x-auto no-scrollbar px-1">
+        <div className="flex items-center gap-2 sm:gap-3 mx-auto overflow-x-auto no-scrollbar px-1 max-w-full">
           {/* Audio */}
           <button
             onClick={handleToggleMic}
