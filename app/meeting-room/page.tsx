@@ -743,17 +743,18 @@ export default function MeetingRoom() {
   // Responsive grid sizing (Google Meet-like): auto-fit tiles without horizontal overflow.
   // UI-only: does not affect any meeting logic.
   const totalConferencingUsers = participants.length + 1; // Participants + local user
+  const isTwoUp = totalConferencingUsers === 2;
+
+  // For 2 participants, Google Meet uses a stable 2-up split on desktop (no auto-fit),
+  // and stacks on small screens. For 3+ we use auto-fit/minmax.
   const minTilePx =
-    totalConferencingUsers <= 2
-      ? 520
-      : totalConferencingUsers <= 4
-        ? 420
-        : totalConferencingUsers <= 6
-          ? 340
-          : 280;
-  const gridStyle: React.CSSProperties = {
-    gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
-  };
+    totalConferencingUsers <= 4 ? 420 : totalConferencingUsers <= 6 ? 340 : 280;
+
+  const gridStyle: React.CSSProperties | undefined = isTwoUp
+    ? undefined
+    : {
+        gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
+      };
 
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
@@ -813,7 +814,13 @@ export default function MeetingRoom() {
         <div className="flex-1 flex flex-col justify-center">
           <div
             style={gridStyle}
-            className="grid auto-rows-fr items-stretch place-content-center gap-2 sm:gap-4 w-full max-w-7xl 2xl:max-w-[1600px] mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden"
+            className={[
+              "grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden",
+              // Center content like Meet
+              "place-content-center",
+              // Two-up special case
+              isTwoUp ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]" : "max-w-7xl 2xl:max-w-[1600px]",
+            ].join(" ")}
           >
             {/* 1. Local Participant Card */}
             <div className="relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center aspect-video">
