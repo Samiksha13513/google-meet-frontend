@@ -82,10 +82,12 @@ const ParticipantVideo = ({
   stream,
   isLocal,
   muted,
+  fit = "cover",
 }: {
   stream?: MediaStream;
   isLocal: boolean;
   muted: boolean;
+  fit?: "cover" | "contain";
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -93,10 +95,20 @@ const ParticipantVideo = ({
     const video = videoRef.current;
     if (!video || !stream) return;
 
-    video.srcObject = stream;
-    video.play().catch((err) => {
-      console.log(`[WebRTC:Video] Autoplay for ${isLocal ? "local" : "remote"} stream failed:`, err);
-    });
+    const attach = () => {
+      video.srcObject = stream;
+      video.play().catch((err) => {
+        console.log(`[WebRTC:Video] Autoplay for ${isLocal ? "local" : "remote"} stream failed:`, err);
+      });
+    };
+
+    attach();
+    stream.addEventListener("addtrack", attach);
+    stream.addEventListener("removetrack", attach);
+    return () => {
+      stream.removeEventListener("addtrack", attach);
+      stream.removeEventListener("removetrack", attach);
+    };
   }, [stream, isLocal]);
 
   return (
@@ -105,7 +117,7 @@ const ParticipantVideo = ({
       autoPlay
       playsInline
       muted={muted}
-      className="w-full h-full object-cover rounded-2xl"
+      className={`w-full h-full rounded-2xl ${fit === "contain" ? "object-contain bg-black" : "object-cover"}`}
     />
   );
 };
@@ -233,6 +245,8 @@ export default function MeetingRoom() {
   };
 
   const cleanupAll = () => {
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
     cleanupLiveSession();
     stopPreviewTracks();
     if (localVideoRef.current) {
@@ -260,31 +274,47 @@ export default function MeetingRoom() {
     sessionRef.current?.sendStatusUpdate(isMicOn, next);
   };
 
+  const endScreenShare = async () => {
+    if (!isScreenSharing && !screenStreamRef.current) return;
+    await sessionRef.current?.stopScreenShare();
+    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    screenStreamRef.current = null;
+    setIsScreenSharing(false);
+    setPinnedParticipantId((prev) => (prev === "local" ? null : prev));
+  };
+
   const handleToggleScreenShare = async () => {
     if (isScreenSharing) {
-      // Stop screen share
-      await sessionRef.current?.stopScreenShare();
-      screenStreamRef.current = null;
-      setIsScreenSharing(false);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: false,
-        });
-        screenStreamRef.current = stream;
-        await sessionRef.current?.startScreenShare(stream);
-        setIsScreenSharing(true);
+      await endScreenShare();
+      return;
+    }
 
-        // When sharing ends from browser control
-        stream.getVideoTracks()[0].onended = async () => {
-          await sessionRef.current?.stopScreenShare();
-          screenStreamRef.current = null;
-          setIsScreenSharing(false);
-        };
-      } catch (err) {
-        console.error("Screen sharing permission denied or failed:", err);
-      }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: true,
+      });
+      const camTrack = localStreamRef.current?.getVideoTracks()[0] ?? null;
+      const micTrack = localStreamRef.current?.getAudioTracks()[0] ?? null;
+      sessionRef.current?.setLocalCameraVideoTrack(camTrack);
+      sessionRef.current?.setLocalMicAudioTrack(micTrack);
+
+      screenStreamRef.current = stream;
+      await sessionRef.current?.startScreenShare(stream);
+      setIsScreenSharing(true);
+      setPinnedParticipantId("local");
+
+      const stopFromBrowser = () => {
+        void endScreenShare();
+      };
+      stream.getVideoTracks().forEach((track) => {
+        track.onended = stopFromBrowser;
+      });
+      stream.getAudioTracks().forEach((track) => {
+        track.onended = stopFromBrowser;
+      });
+    } catch (err) {
+      console.error("Screen sharing permission denied or failed:", err);
     }
   };
 
@@ -405,6 +435,7 @@ export default function MeetingRoom() {
                     }),
                     isMicOn: remoteDetails?.isMicOn ?? p.isMicOn,
                     isCameraOn: remoteDetails?.isCameraOn ?? p.isCameraOn,
+                    isScreenSharing: remoteDetails?.isScreenSharing ?? p.isScreenSharing,
                     isHandRaised: remoteDetails?.isHandRaised ?? p.isHandRaised,
                     isHost: remoteDetails?.isHost ?? p.isHost,
                   }
@@ -647,7 +678,7 @@ export default function MeetingRoom() {
     if (stream && localVideoRef.current) {
       localVideoRef.current.srcObject = stream;
     }
-  }, [meetingState, isCameraOn]);
+  }, [meetingState, isCameraOn, isScreenSharing]);
 
   // Active speaker detection (UI-only; no signaling flow changes)
   useEffect(() => {
@@ -846,6 +877,28 @@ export default function MeetingRoom() {
         gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
       };
 
+  const sharingParticipant = participants.find((p) => p.isScreenSharing);
+  const presenterId: string | null = isScreenSharing
+    ? "local"
+    : sharingParticipant?.socketId ?? null;
+  const isPresentationMode = Boolean(presenterId);
+  const presenterParticipant =
+    presenterId === "local" ? null : participants.find((p) => p.socketId === presenterId);
+  const presenterStream =
+    presenterId === "local"
+      ? screenStreamRef.current ?? undefined
+      : presenterParticipant?.stream;
+  const presenterName =
+    presenterId === "local" ? resolvedDisplayName : presenterParticipant?.displayName ?? "Participant";
+  const filmstripParticipants = orderedParticipants.filter((p) => p.socketId !== presenterId);
+  const showLocalInFilmstrip = presenterId !== "local";
+
+  const hasVisibleVideo = (
+    stream: MediaStream | undefined,
+    cameraOn: boolean,
+    sharing: boolean
+  ) => Boolean(stream && (cameraOn || sharing));
+
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
       {/* Floating Join Request Modal (Host only) */}
@@ -899,16 +952,119 @@ export default function MeetingRoom() {
         ))}
       </div>
 
-      {/* Main Grid View */}
+      {/* Main video area — grid or presenter layout */}
       <div className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 min-h-0">
-        <div className="flex-1 flex flex-col justify-center">
+        <div className="flex-1 flex flex-col justify-center min-h-0 min-w-0">
+          {isPresentationMode ? (
+            <div className="flex flex-1 flex-col md:flex-row min-h-0 gap-2 sm:gap-3 w-full max-w-[1800px] mx-auto">
+              <div className="relative flex-1 min-h-[40vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg">
+                {presenterStream ? (
+                  <ParticipantVideo
+                    stream={presenterStream}
+                    isLocal={presenterId === "local"}
+                    muted={presenterId === "local"}
+                    fit="contain"
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-sm text-white/50">
+                    Connecting to presentation…
+                  </div>
+                )}
+                <div className="absolute top-3 left-3 flex items-center gap-2 rounded-full border border-white/10 bg-black/70 px-3 py-1.5 text-xs backdrop-blur-md">
+                  <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />
+                  <span className="max-w-[200px] truncate">
+                    {presenterName}
+                    {presenterId === "local" ? " (You)" : ""} is presenting
+                  </span>
+                </div>
+                {presenterId === "local" && isScreenSharing && (
+                  <button
+                    type="button"
+                    onClick={() => void handleToggleScreenShare()}
+                    className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-[#8ab4f8] px-5 py-2 text-sm font-medium text-[#202124] hover:bg-[#a8c7fa] transition-colors"
+                  >
+                    Stop presenting
+                  </button>
+                )}
+              </div>
+
+              <div className="flex shrink-0 gap-2 overflow-x-auto md:flex-col md:overflow-x-hidden md:overflow-y-auto md:w-44 lg:w-52 md:max-h-full pb-1 md:pb-0 no-scrollbar">
+                {showLocalInFilmstrip && (
+                  <div
+                    className={[
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 md:w-full shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
+                    ].join(" ")}
+                    onDoubleClick={() =>
+                      setPinnedParticipantId((prev) => (prev === "local" ? null : "local"))
+                    }
+                  >
+                    {isCameraOn && !isScreenSharing ? (
+                      <video
+                        ref={localVideoRef}
+                        autoPlay
+                        muted
+                        playsInline
+                        className="h-full w-full object-cover scale-x-[-1]"
+                      />
+                    ) : (
+                      <div className="flex h-full items-center justify-center">
+                        <MeetAvatar
+                          name={resolvedDisplayName}
+                          email={isAuthenticated ? identity.email : undefined}
+                          image={isAuthenticated ? identity.image : undefined}
+                          size="md"
+                        />
+                      </div>
+                    )}
+                    <div className="absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-[10px]">
+                      You
+                    </div>
+                  </div>
+                )}
+
+                {filmstripParticipants.map((p) => (
+                  <div
+                    key={p.socketId}
+                    className={[
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 md:w-full shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
+                      p.isScreenSharing ? "ring-2 ring-[#8ab4f8]" : "",
+                    ].join(" ")}
+                    onDoubleClick={() =>
+                      setPinnedParticipantId((prev) =>
+                        prev === p.socketId ? null : p.socketId
+                      )
+                    }
+                  >
+                    {hasVisibleVideo(p.stream, p.isCameraOn, p.isScreenSharing) ? (
+                      <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
+                    ) : (
+                      <div className="flex h-full items-center justify-center">
+                        <MeetAvatar
+                          name={p.displayName}
+                          email={p.email}
+                          image={p.image}
+                          size="md"
+                        />
+                      </div>
+                    )}
+                    <div className="absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-[10px]">
+                      {p.displayName}
+                    </div>
+                    {p.isScreenSharing && (
+                      <MonitorUp className="absolute top-1 right-1 h-3.5 w-3.5 text-[#8ab4f8]" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
           <div
             style={gridStyle}
             className={[
               "grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden",
-              // Center content like Meet
               "place-content-center",
-              // Two-up special case
               isTwoUp ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]" : "max-w-7xl 2xl:max-w-[1600px]",
             ].join(" ")}
           >
@@ -928,13 +1084,20 @@ export default function MeetingRoom() {
               }
               title="Double-click to pin yourself"
             >
-              {isCameraOn ? (
+              {isCameraOn && !isScreenSharing ? (
                 <video
                   ref={localVideoRef}
                   autoPlay
                   muted
                   playsInline
                   className="w-full h-full object-cover rounded-2xl scale-x-[-1]"
+                />
+              ) : isScreenSharing && screenStreamRef.current ? (
+                <ParticipantVideo
+                  stream={screenStreamRef.current}
+                  isLocal
+                  muted
+                  fit="contain"
                 />
               ) : (
                 <div className="flex flex-col items-center gap-4">
@@ -957,6 +1120,7 @@ export default function MeetingRoom() {
                 {isHost && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
                 {isHandRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
                 {!isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
+                {isScreenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
               </div>
             </div>
 
@@ -979,8 +1143,13 @@ export default function MeetingRoom() {
                 }
                 title="Double-click to pin participant"
               >
-                {p.stream && p.isCameraOn ? (
-                  <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
+                {hasVisibleVideo(p.stream, p.isCameraOn, p.isScreenSharing) ? (
+                  <ParticipantVideo
+                    stream={p.stream}
+                    isLocal={false}
+                    muted={false}
+                    fit={p.isScreenSharing ? "contain" : "cover"}
+                  />
                 ) : (
                   <div className="flex flex-col items-center gap-4">
                     <MeetAvatar
@@ -1004,6 +1173,7 @@ export default function MeetingRoom() {
                   )}
                   {p.isHandRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
                   {!p.isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
+                  {p.isScreenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
                 </div>
                 {/* Host Control Actions */}
                 {isHost && (
@@ -1018,6 +1188,7 @@ export default function MeetingRoom() {
               </div>
             ))}
           </div>
+          )}
         </div>
 
         {/* Right Sidebar - Chat panel */}

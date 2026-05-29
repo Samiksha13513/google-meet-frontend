@@ -73,6 +73,8 @@ export class MeetingPeerSession {
   private isStarting = false;
   private isSessionActive = false;
   private screenShareStream: MediaStream | null = null;
+  private localCameraVideoTrack: MediaStreamTrack | null = null;
+  private localMicAudioTrack: MediaStreamTrack | null = null;
 
   constructor(
     private readonly roomId: string,
@@ -127,42 +129,77 @@ export class MeetingPeerSession {
     }
   }
 
-  // Add a screen sharing stream and propagate to all mesh peers
+  /** Store local tracks so we can restore after screen share stops */
+  setLocalCameraVideoTrack(track: MediaStreamTrack | null): void {
+    this.localCameraVideoTrack = track;
+  }
+
+  setLocalMicAudioTrack(track: MediaStreamTrack | null): void {
+    this.localMicAudioTrack = track;
+  }
+
+  /** Replace outbound video with screen track on every peer (Google Meet style) */
   async startScreenShare(stream: MediaStream): Promise<void> {
     this.screenShareStream = stream;
+    const screenTrack = stream.getVideoTracks()[0];
+    const screenAudioTrack = stream.getAudioTracks()[0];
+    if (!screenTrack) {
+      console.warn("[WebRTC:Mesh] Screen share stream has no video track");
+      return;
+    }
 
     for (const [socketId, peer] of this.peers.entries()) {
       try {
-        stream.getTracks().forEach((track) => {
-          peer.addTrack(track, stream);
-        });
+        const videoSender = peer
+          .getSenders()
+          .find((s) => s.track?.kind === "video");
+        if (videoSender) {
+          await videoSender.replaceTrack(screenTrack);
+        } else {
+          peer.addTrack(screenTrack, stream);
+        }
+        if (screenAudioTrack) {
+          const audioSender = peer
+            .getSenders()
+            .find((s) => s.track?.kind === "audio");
+          if (audioSender) {
+            await audioSender.replaceTrack(screenAudioTrack);
+          } else {
+            peer.addTrack(screenAudioTrack, stream);
+          }
+        }
         await this.sendOffer(socketId);
       } catch (err) {
-        console.error(`[WebRTC:Mesh] Error adding screen-share track for ${socketId}:`, err);
+        console.error(`[WebRTC:Mesh] Screen share replaceTrack failed for ${socketId}:`, err);
       }
     }
 
     this.socket.emit("screen-share-started", { roomId: this.roomId });
   }
 
-  // Stop screen sharing and notify all mesh peers
+  /** Restore camera video on all peers and notify room */
   async stopScreenShare(): Promise<void> {
     if (!this.screenShareStream) return;
 
-    const tracks = this.screenShareStream.getTracks();
-    tracks.forEach((track) => track.stop());
+    this.screenShareStream.getTracks().forEach((track) => track.stop());
 
     for (const [socketId, peer] of this.peers.entries()) {
       try {
-        const senders = peer.getSenders();
-        for (const sender of senders) {
-          if (sender.track && tracks.some((t) => t.id === sender.track!.id)) {
-            peer.removeTrack(sender);
-          }
+        const videoSender = peer
+          .getSenders()
+          .find((s) => s.track?.kind === "video");
+        if (videoSender) {
+          await videoSender.replaceTrack(this.localCameraVideoTrack);
+        }
+        const audioSender = peer
+          .getSenders()
+          .find((s) => s.track?.kind === "audio");
+        if (audioSender && this.localMicAudioTrack) {
+          await audioSender.replaceTrack(this.localMicAudioTrack);
         }
         await this.sendOffer(socketId);
       } catch (err) {
-        console.error(`[WebRTC:Mesh] Error removing screen-share track for ${socketId}:`, err);
+        console.error(`[WebRTC:Mesh] Restore camera after screen share failed for ${socketId}:`, err);
       }
     }
 
@@ -285,12 +322,20 @@ export class MeetingPeerSession {
       console.log(`[WebRTC:Mesh] Added local track (${track.kind}) to peer ${socketId}`);
     });
 
-    // Add screen share tracks if currently active
+    // If already presenting, replace outbound tracks (avoid duplicate video senders)
     if (this.screenShareStream) {
-      this.screenShareStream.getTracks().forEach((track) => {
-        peer.addTrack(track, this.screenShareStream!);
-        console.log(`[WebRTC:Mesh] Added screen-share track (${track.kind}) to peer ${socketId}`);
-      });
+      const screenTrack = this.screenShareStream.getVideoTracks()[0];
+      const screenAudioTrack = this.screenShareStream.getAudioTracks()[0];
+      const videoSender = peer.getSenders().find((s) => s.track?.kind === "video");
+      if (videoSender && screenTrack) {
+        void videoSender.replaceTrack(screenTrack);
+      }
+      if (screenAudioTrack) {
+        const audioSender = peer.getSenders().find((s) => s.track?.kind === "audio");
+        if (audioSender) {
+          void audioSender.replaceTrack(screenAudioTrack);
+        }
+      }
     }
 
     return peer;
