@@ -1,5 +1,7 @@
 import type { Socket } from "socket.io-client";
 import { PEER_CONNECTION_CONFIG } from "./config";
+import { isScreenTrackAlive } from "./screen-share";
+import { stopMediaStream } from "./stream-utils";
 
 type MeetingMember = {
   socketId: string;
@@ -58,6 +60,8 @@ export type MeetingSessionCallbacks = {
   onEmojiReaction?: (data: EmojiPayload) => void;
   onScreenShareStarted?: (senderId: string) => void;
   onScreenShareStopped?: (senderId: string) => void;
+  /** Local screen capture ended (browser UI, track timeout, or health check). */
+  onLocalScreenShareEnded?: () => void;
   onHandRaisedChanged?: (data: { senderId: string; isHandRaised: boolean }) => void;
   onKicked?: () => void;
 };
@@ -75,6 +79,10 @@ export class MeetingPeerSession {
   private screenShareStream: MediaStream | null = null;
   private localCameraVideoTrack: MediaStreamTrack | null = null;
   private localMicAudioTrack: MediaStreamTrack | null = null;
+  private peerCleanupHandlers = new Map<string, Array<() => void>>();
+  private peerDisconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private screenShareMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  private isStoppingScreenShare = false;
 
   constructor(
     private readonly roomId: string,
@@ -175,13 +183,32 @@ export class MeetingPeerSession {
     }
 
     this.socket.emit("screen-share-started", { roomId: this.roomId });
+    this.startScreenShareMonitor();
+  }
+
+  /** Re-apply screen tracks after reconnect / visibility (long meetings). */
+  async refreshScreenShareIfActive(): Promise<void> {
+    if (!this.screenShareStream || !isScreenTrackAlive(this.screenShareStream)) {
+      if (this.screenShareStream) {
+        await this.stopScreenShare();
+        this.callbacks.onLocalScreenShareEnded?.();
+      }
+      return;
+    }
+    await this.applyScreenShareToAllPeers();
+  }
+
+  isScreenSharingActive(): boolean {
+    return Boolean(this.screenShareStream && isScreenTrackAlive(this.screenShareStream));
   }
 
   /** Restore camera video on all peers and notify room */
   async stopScreenShare(): Promise<void> {
-    if (!this.screenShareStream) return;
+    if (!this.screenShareStream || this.isStoppingScreenShare) return;
+    this.isStoppingScreenShare = true;
+    this.stopScreenShareMonitor();
 
-    this.screenShareStream.getTracks().forEach((track) => track.stop());
+    stopMediaStream(this.screenShareStream);
 
     for (const [socketId, peer] of this.peers.entries()) {
       try {
@@ -205,6 +232,59 @@ export class MeetingPeerSession {
 
     this.screenShareStream = null;
     this.socket.emit("screen-share-stopped", { roomId: this.roomId });
+    this.isStoppingScreenShare = false;
+  }
+
+  private async applyScreenShareToAllPeers(): Promise<void> {
+    if (!this.screenShareStream) return;
+    const screenTrack = this.screenShareStream.getVideoTracks()[0];
+    const screenAudioTrack = this.screenShareStream.getAudioTracks()[0];
+    if (!screenTrack || screenTrack.readyState === "ended") return;
+
+    for (const [socketId, peer] of this.peers.entries()) {
+      if (peer.connectionState === "closed") continue;
+      try {
+        const videoSender = peer.getSenders().find((s) => s.track?.kind === "video");
+        if (videoSender && videoSender.track?.id !== screenTrack.id) {
+          await videoSender.replaceTrack(screenTrack);
+          await this.sendOffer(socketId);
+        }
+        if (screenAudioTrack) {
+          const audioSender = peer.getSenders().find((s) => s.track?.kind === "audio");
+          if (audioSender && audioSender.track?.id !== screenAudioTrack.id) {
+            await audioSender.replaceTrack(screenAudioTrack);
+            await this.sendOffer(socketId);
+          }
+        }
+      } catch (err) {
+        console.warn(`[WebRTC:Mesh] Screen share refresh failed for ${socketId}:`, err);
+      }
+    }
+  }
+
+  private startScreenShareMonitor(): void {
+    this.stopScreenShareMonitor();
+    this.screenShareMonitorTimer = setInterval(() => {
+      void this.runScreenShareHealthCheck();
+    }, 12_000);
+  }
+
+  private stopScreenShareMonitor(): void {
+    if (this.screenShareMonitorTimer) {
+      clearInterval(this.screenShareMonitorTimer);
+      this.screenShareMonitorTimer = null;
+    }
+  }
+
+  private async runScreenShareHealthCheck(): Promise<void> {
+    if (!this.screenShareStream) return;
+    if (!isScreenTrackAlive(this.screenShareStream)) {
+      console.warn("[WebRTC:Mesh] Screen share track ended — stopping share");
+      await this.stopScreenShare();
+      this.callbacks.onLocalScreenShareEnded?.();
+      return;
+    }
+    await this.applyScreenShareToAllPeers();
   }
 
   // Host approval and removal triggers
@@ -249,10 +329,21 @@ export class MeetingPeerSession {
 
   destroy(): void {
     this.isSessionActive = false;
+    this.stopScreenShareMonitor();
+    for (const timer of this.peerDisconnectTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.peerDisconnectTimers.clear();
+
+    if (this.screenShareStream) {
+      stopMediaStream(this.screenShareStream);
+      this.screenShareStream = null;
+    }
+
     this.socket.emit("leave-room", { roomId: this.roomId });
     this.unregisterSocketEvents();
 
-    for (const [socketId] of this.peers) {
+    for (const [socketId] of [...this.peers.keys()]) {
       this.removePeer(socketId);
     }
 
@@ -261,7 +352,7 @@ export class MeetingPeerSession {
     this.remoteDisplayNames.clear();
     this.remoteDetails.clear();
     this.pendingRemoteIce.clear();
-    this.screenShareStream = null;
+    this.peerCleanupHandlers.clear();
   }
 
   private getOrCreatePeer(socketId: string, displayName: string): RTCPeerConnection {
@@ -278,6 +369,17 @@ export class MeetingPeerSession {
     this.peers.set(socketId, peer);
     this.remoteDisplayNames.set(socketId, displayName);
 
+    const emitRemoteStream = () => {
+      const stream = this.remoteStreams.get(socketId);
+      if (!stream) return;
+      this.callbacks.onRemoteStreamAdded(
+        socketId,
+        stream,
+        displayName,
+        this.remoteDetails.get(socketId)
+      );
+    };
+
     // Bind WebRTC track events
     peer.ontrack = (event) => {
       console.log(`[WebRTC:Mesh] ontrack event from ${socketId} for ${event.track.kind}`);
@@ -289,12 +391,19 @@ export class MeetingPeerSession {
         }
       }
       this.remoteStreams.set(socketId, stream);
-      this.callbacks.onRemoteStreamAdded(
-        socketId,
-        stream,
-        displayName,
-        this.remoteDetails.get(socketId)
-      );
+
+      const track = event.track;
+      const onTrackChange = () => emitRemoteStream();
+      track.addEventListener("ended", onTrackChange);
+      track.addEventListener("mute", onTrackChange);
+      track.addEventListener("unmute", onTrackChange);
+      this.addPeerCleanup(socketId, () => {
+        track.removeEventListener("ended", onTrackChange);
+        track.removeEventListener("mute", onTrackChange);
+        track.removeEventListener("unmute", onTrackChange);
+      });
+
+      emitRemoteStream();
     };
 
     // ICE trickle
@@ -308,13 +417,56 @@ export class MeetingPeerSession {
       }
     };
 
-    // Auto cleanup failed peers
-    peer.onconnectionstatechange = () => {
-      console.log(`[WebRTC:Mesh] Connection with ${socketId} is now ${peer.connectionState}`);
-      if (peer.connectionState === "failed" || peer.connectionState === "closed") {
+    const onConnectionStateChange = () => {
+      const state = peer.connectionState;
+      console.log(`[WebRTC:Mesh] Connection with ${socketId} is now ${state}`);
+      if (state === "connected") {
+        const timer = this.peerDisconnectTimers.get(socketId);
+        if (timer) {
+          clearTimeout(timer);
+          this.peerDisconnectTimers.delete(socketId);
+        }
+        if (this.screenShareStream) {
+          void this.applyScreenShareToAllPeers();
+        }
+      } else if (state === "disconnected") {
+        this.schedulePeerRemoval(socketId, 12_000);
+      } else if (state === "failed") {
+        void this.tryIceRestart(socketId);
+        this.schedulePeerRemoval(socketId, 20_000);
+      } else if (state === "closed") {
         this.removePeer(socketId);
       }
     };
+
+    peer.onconnectionstatechange = onConnectionStateChange;
+
+    const onIceConnectionStateChange = () => {
+      const iceState = peer.iceConnectionState;
+      console.log(`[WebRTC:Mesh] ICE with ${socketId}: ${iceState}`);
+      if (iceState === "connected" || iceState === "completed") {
+        const timer = this.peerDisconnectTimers.get(socketId);
+        if (timer) {
+          clearTimeout(timer);
+          this.peerDisconnectTimers.delete(socketId);
+        }
+        if (this.screenShareStream) {
+          void this.applyScreenShareToAllPeers();
+        }
+      } else if (iceState === "disconnected") {
+        this.schedulePeerRemoval(socketId, 12_000);
+      } else if (iceState === "failed") {
+        void this.tryIceRestart(socketId);
+      }
+    };
+
+    peer.oniceconnectionstatechange = onIceConnectionStateChange;
+    this.addPeerCleanup(socketId, () => {
+      peer.ontrack = null;
+      peer.onicecandidate = null;
+      peer.onconnectionstatechange = null;
+      peer.oniceconnectionstatechange = null;
+    });
 
     // Add local tracks (camera / mic)
     this.localStream.getTracks().forEach((track) => {
@@ -341,13 +493,87 @@ export class MeetingPeerSession {
     return peer;
   }
 
+  private addPeerCleanup(socketId: string, cleanup: () => void): void {
+    const list = this.peerCleanupHandlers.get(socketId) || [];
+    list.push(cleanup);
+    this.peerCleanupHandlers.set(socketId, list);
+  }
+
+  private runPeerCleanups(socketId: string): void {
+    const list = this.peerCleanupHandlers.get(socketId);
+    if (list) {
+      list.forEach((fn) => {
+        try {
+          fn();
+        } catch {
+          // ignore
+        }
+      });
+    }
+    this.peerCleanupHandlers.delete(socketId);
+  }
+
+  private schedulePeerRemoval(socketId: string, delayMs: number): void {
+    const existing = this.peerDisconnectTimers.get(socketId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.peerDisconnectTimers.delete(socketId);
+      const peer = this.peers.get(socketId);
+      if (
+        peer &&
+        (peer.connectionState === "disconnected" ||
+          peer.connectionState === "failed" ||
+          peer.iceConnectionState === "disconnected" ||
+          peer.iceConnectionState === "failed")
+      ) {
+        console.warn(`[WebRTC:Mesh] Removing stale peer ${socketId} after timeout`);
+        this.removePeer(socketId);
+      }
+    }, delayMs);
+    this.peerDisconnectTimers.set(socketId, timer);
+  }
+
+  private async tryIceRestart(socketId: string): Promise<void> {
+    const peer = this.peers.get(socketId);
+    if (!peer || peer.connectionState === "closed") return;
+    try {
+      if (peer.signalingState !== "stable") return;
+      const offer = await peer.createOffer({ iceRestart: true });
+      await peer.setLocalDescription(offer);
+      this.socket.emit("offer", {
+        roomId: this.roomId,
+        offer: peer.localDescription,
+        targetId: socketId,
+      });
+      console.log(`[WebRTC:Mesh] ICE restart offer sent to ${socketId}`);
+    } catch (err) {
+      console.warn(`[WebRTC:Mesh] ICE restart failed for ${socketId}:`, err);
+    }
+  }
+
   private removePeer(socketId: string): void {
+    const timer = this.peerDisconnectTimers.get(socketId);
+    if (timer) {
+      clearTimeout(timer);
+      this.peerDisconnectTimers.delete(socketId);
+    }
+
+    this.runPeerCleanups(socketId);
+
+    const remoteStream = this.remoteStreams.get(socketId);
+    stopMediaStream(remoteStream);
+    this.remoteStreams.delete(socketId);
+
     const peer = this.peers.get(socketId);
     if (peer) {
-      peer.close();
+      try {
+        peer.close();
+      } catch {
+        // ignore
+      }
       this.peers.delete(socketId);
     }
-    this.remoteStreams.delete(socketId);
+
     this.remoteDisplayNames.delete(socketId);
     this.remoteDetails.delete(socketId);
     this.pendingRemoteIce.delete(socketId);

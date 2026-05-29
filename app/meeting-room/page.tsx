@@ -23,6 +23,12 @@ import { useParams, useRouter } from "next/navigation";
 import { socket } from "@/lib/socket";
 import { getLocalStream } from "../../webrtc/media";
 import { MeetingPeerSession } from "../../webrtc/meeting-session";
+import {
+  bindScreenShareEndHandlers,
+  getScreenShareSupport,
+  requestScreenShareStream,
+} from "../../webrtc/screen-share";
+import { detachVideoElement, stopMediaStream } from "../../webrtc/stream-utils";
 import { PreviewLobby } from "@/components/meeting/PreviewLobby";
 import {
   getCurrentUserIdentity,
@@ -90,26 +96,64 @@ const ParticipantVideo = ({
   fit?: "cover" | "contain";
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [streamUnavailable, setStreamUnavailable] = useState(false);
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !stream) return;
+    if (!video) return;
+
+    if (!stream) {
+      detachVideoElement(video);
+      setStreamUnavailable(true);
+      return;
+    }
+
+    setStreamUnavailable(false);
 
     const attach = () => {
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack && videoTrack.readyState === "ended") {
+        setStreamUnavailable(true);
+        detachVideoElement(video);
+        return;
+      }
+      setStreamUnavailable(false);
       video.srcObject = stream;
       video.play().catch((err) => {
         console.log(`[WebRTC:Video] Autoplay for ${isLocal ? "local" : "remote"} stream failed:`, err);
       });
     };
 
+    const onTrackEnded = () => {
+      const vt = stream.getVideoTracks()[0];
+      if (!vt || vt.readyState === "ended") {
+        setStreamUnavailable(true);
+        detachVideoElement(video);
+      } else {
+        attach();
+      }
+    };
+
     attach();
     stream.addEventListener("addtrack", attach);
-    stream.addEventListener("removetrack", attach);
+    stream.addEventListener("removetrack", onTrackEnded);
+    stream.getTracks().forEach((t) => t.addEventListener("ended", onTrackEnded));
+
     return () => {
       stream.removeEventListener("addtrack", attach);
-      stream.removeEventListener("removetrack", attach);
+      stream.removeEventListener("removetrack", onTrackEnded);
+      stream.getTracks().forEach((t) => t.removeEventListener("ended", onTrackEnded));
+      detachVideoElement(video);
     };
   }, [stream, isLocal]);
+
+  if (streamUnavailable || !stream) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded-2xl bg-[#2d2e30] text-xs text-white/50">
+        Video unavailable
+      </div>
+    );
+  }
 
   return (
     <video
@@ -192,6 +236,7 @@ export default function MeetingRoom() {
   const [isHost, setIsHost] = useState(false);
   const [meetingError, setMeetingError] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [screenShareError, setScreenShareError] = useState<string | null>(null);
   const [, setPermissionRequested] = useState(false);
   const [deniedReason, setDeniedReason] = useState("Host denied your request");
 
@@ -225,6 +270,8 @@ export default function MeetingRoom() {
   const audioLevelsRef = useRef<Record<string, number>>({});
 
   const emojiRef = useRef<HTMLDivElement>(null);
+  const screenShareUnbindRef = useRef<(() => void) | null>(null);
+  const screenShareSupport = typeof window !== "undefined" ? getScreenShareSupport() : null;
 
   // =========================
   // CLEANUPS
@@ -236,22 +283,60 @@ export default function MeetingRoom() {
     localStreamRef.current = null;
   };
 
+  const clearScreenShareBindings = () => {
+    screenShareUnbindRef.current?.();
+    screenShareUnbindRef.current = null;
+  };
+
+  const removeParticipantFromUi = (socketId: string) => {
+    setParticipants((prev) => {
+      const removed = prev.find((p) => p.socketId === socketId);
+      if (removed?.stream) {
+        stopMediaStream(removed.stream);
+      }
+      return prev.filter((p) => p.socketId !== socketId);
+    });
+    setPinnedParticipantId((prev) => (prev === socketId ? null : prev));
+    setActiveSpeakerId((prev) => (prev === socketId ? null : prev));
+    delete audioLevelsRef.current[socketId];
+  };
+
+  const resetInMeetingUiState = () => {
+    setPinnedParticipantId(null);
+    setActiveSpeakerId(null);
+    setIsScreenSharing(false);
+    setIsHandRaised(false);
+    setScreenShareError(null);
+    setShowChat(false);
+    setShowParticipantsList(false);
+    setShowEmojiPicker(false);
+    setFloatingReactions([]);
+    clearScreenShareBindings();
+  };
+
   const cleanupLiveSession = () => {
-    setParticipants([]);
+    clearScreenShareBindings();
+    stopMediaStream(screenStreamRef.current);
+    screenStreamRef.current = null;
+    setParticipants((prev) => {
+      prev.forEach((p) => stopMediaStream(p.stream));
+      return [];
+    });
     setJoinRequests([]);
     setMessages([]);
     sessionRef.current?.destroy();
     sessionRef.current = null;
+    resetInMeetingUiState();
   };
 
   const cleanupAll = () => {
-    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    clearScreenShareBindings();
+    stopMediaStream(screenStreamRef.current);
     screenStreamRef.current = null;
     cleanupLiveSession();
     stopPreviewTracks();
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
+    detachVideoElement(localVideoRef.current);
+    resetInMeetingUiState();
   };
 
   // =========================
@@ -276,8 +361,13 @@ export default function MeetingRoom() {
 
   const endScreenShare = async () => {
     if (!isScreenSharing && !screenStreamRef.current) return;
-    await sessionRef.current?.stopScreenShare();
-    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+    clearScreenShareBindings();
+    try {
+      await sessionRef.current?.stopScreenShare();
+    } catch (err) {
+      console.error("[ScreenShare] stop failed:", err);
+    }
+    stopMediaStream(screenStreamRef.current);
     screenStreamRef.current = null;
     setIsScreenSharing(false);
     setPinnedParticipantId((prev) => (prev === "local" ? null : prev));
@@ -289,11 +379,21 @@ export default function MeetingRoom() {
       return;
     }
 
+    setScreenShareError(null);
+    const support = getScreenShareSupport();
+    if (!support.supported) {
+      setScreenShareError(support.reason || "Screen sharing is not available.");
+      return;
+    }
+
+    const result = await requestScreenShareStream();
+    if (!result.ok) {
+      setScreenShareError(result.error);
+      return;
+    }
+
+    const stream = result.stream;
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
-      });
       const camTrack = localStreamRef.current?.getVideoTracks()[0] ?? null;
       const micTrack = localStreamRef.current?.getAudioTracks()[0] ?? null;
       sessionRef.current?.setLocalCameraVideoTrack(camTrack);
@@ -304,17 +404,16 @@ export default function MeetingRoom() {
       setIsScreenSharing(true);
       setPinnedParticipantId("local");
 
-      const stopFromBrowser = () => {
+      clearScreenShareBindings();
+      screenShareUnbindRef.current = bindScreenShareEndHandlers(stream, () => {
         void endScreenShare();
-      };
-      stream.getVideoTracks().forEach((track) => {
-        track.onended = stopFromBrowser;
-      });
-      stream.getAudioTracks().forEach((track) => {
-        track.onended = stopFromBrowser;
       });
     } catch (err) {
-      console.error("Screen sharing permission denied or failed:", err);
+      stopMediaStream(stream);
+      screenStreamRef.current = null;
+      const message = err instanceof Error ? err.message : "Failed to start screen sharing.";
+      setScreenShareError(message);
+      console.error("[ScreenShare] start failed:", err);
     }
   };
 
@@ -357,6 +456,7 @@ export default function MeetingRoom() {
 
   const handleLeaveMeeting = () => {
     cleanupAll();
+    resetInMeetingUiState();
     setMeetingState("ended");
   };
 
@@ -464,7 +564,10 @@ export default function MeetingRoom() {
         });
       },
       onRemoteStreamRemoved: (socketId) => {
-        setParticipants((prev) => prev.filter((p) => p.socketId !== socketId));
+        removeParticipantFromUi(socketId);
+      },
+      onLocalScreenShareEnded: () => {
+        void endScreenShare();
       },
       onRemoteStatusChanged: (data) => {
         if (data.socketId === socket.id) return;
@@ -574,7 +677,9 @@ export default function MeetingRoom() {
         if (senderId === socket.id) return;
         setPinnedParticipantId((prev) => (prev === senderId ? null : prev));
         setParticipants((prev) =>
-          prev.map((p) => (p.socketId === senderId ? { ...p, isScreenSharing: false } : p))
+          prev.map((p) =>
+            p.socketId === senderId ? { ...p, isScreenSharing: false } : p
+          )
         );
       },
       onHandRaisedChanged: ({ senderId, isHandRaised }) => {
@@ -679,6 +784,27 @@ export default function MeetingRoom() {
       localVideoRef.current.srcObject = stream;
     }
   }, [meetingState, isCameraOn, isScreenSharing]);
+
+  // Refresh screen share + peers after tab focus / network recovery (long meetings).
+  useEffect(() => {
+    if (meetingState !== "inMeeting") return;
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void sessionRef.current?.refreshScreenShareIfActive();
+    };
+
+    const onOnline = () => {
+      void sessionRef.current?.refreshScreenShareIfActive();
+    };
+
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", onOnline);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", onOnline);
+    };
+  }, [meetingState]);
 
   // Active speaker detection (UI-only; no signaling flow changes)
   useEffect(() => {
@@ -1338,6 +1464,20 @@ export default function MeetingRoom() {
         )}
       </div>
 
+      {screenShareError && (
+        <div className="mx-2 sm:mx-4 mb-1 rounded-xl border border-red-400/30 bg-red-500/15 px-4 py-2 text-sm text-red-100 flex items-start justify-between gap-3 z-40">
+          <span>{screenShareError}</span>
+          <button
+            type="button"
+            onClick={() => setScreenShareError(null)}
+            className="shrink-0 text-red-200/80 hover:text-white"
+            aria-label="Dismiss"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Control Actions Bar */}
       <div className="min-h-20 bg-[#202124] flex items-center justify-between px-2 sm:px-6 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t border-white/5 relative z-40 gap-2">
         {/* Time and room details */}
@@ -1372,11 +1512,18 @@ export default function MeetingRoom() {
 
           {/* Screen Share */}
           <button
-            onClick={handleToggleScreenShare}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
+            onClick={() => void handleToggleScreenShare()}
+            disabled={!isScreenSharing && screenShareSupport !== null && !screenShareSupport.supported}
+            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
               isScreenSharing ? "bg-[#8ab4f8] text-[#202124] hover:bg-[#a8c7fa]" : "bg-[#3c4043] hover:bg-[#4f5357]"
             }`}
-            title={isScreenSharing ? "Stop sharing screen" : "Share entire screen"}
+            title={
+              isScreenSharing
+                ? "Stop sharing screen"
+                : screenShareSupport && !screenShareSupport.supported
+                  ? screenShareSupport.reason
+                  : "Share entire screen"
+            }
           >
             <MonitorUp className="h-5 w-5" />
           </button>
