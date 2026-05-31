@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Header } from "../../components/ui/header";
 import { Sidebar } from "../../components/ui/sidebar";
 import { MainContent } from "../../components/ui/maincontent";
+import { CallsPanel } from "../../components/ui/calls-panel";
 
 export default function MeetPage() {
   const [activeNavItem, setActiveNavItem] = useState("meetings");
@@ -31,7 +32,7 @@ export default function MeetPage() {
         </div>
 
         {/* Main content */}
-        <MainContent />
+        {activeNavItem === "calls" ? <CallsPanel /> : <MainContent />}
       </div>
     </div>
   );
