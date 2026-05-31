@@ -26,6 +26,15 @@ class MeetingSocketClient {
 
     this.socket.on("connect", () => {
       useMeetingStore.getState().setConnectionState("connected");
+      // Identify authenticated user for presence and calls
+      try {
+        const token = localStorage.getItem("authToken");
+        if (token) {
+          this.socket?.emit("identify", { token });
+        }
+      } catch (err) {
+        // ignore
+      }
     });
     this.socket.on("reconnect_attempt", () => {
       useMeetingStore.getState().setConnectionState("reconnecting");

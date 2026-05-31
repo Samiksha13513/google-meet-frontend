@@ -24,6 +24,7 @@ export function MeetingActions() {
 
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const [joining, setJoining] = useState(false);
   const [creatingLater, setCreatingLater] = useState(false);
@@ -56,92 +57,86 @@ export function MeetingActions() {
       setError("");
 
       const data = await createMeeting();
-      const code = getMeetingCode(data);
+        {showModal && (
+          <div className="fixed inset-0 z-[999] bg-black/40 flex items-center justify-center">
+            <div className="w-[520px] rounded-3xl bg-white p-8 relative shadow-2xl">
 
-      if (code) {
-        setMeetingLink(buildMeetingLink(code));
-        setShowModal(true);
-      }
-    } catch (error) {
-      handleCreateError(error);
-    } finally {
-      setCreatingLater(false);
-      setOpenDropdown(false);
-    }
-  };
+              <button
+                onClick={() => setShowModal(false)}
+                aria-label="Close joining info"
+                className="absolute right-5 top-5"
+              >
+                <X />
+              </button>
 
-  const handleInstantMeeting = async () => {
-  try {
-    setJoining(true);
-    setError("");
+              <h2 className="text-2xl font-semibold">Here's your joining info</h2>
 
-    const data = await createMeeting();
-    const code = getMeetingCode(data);
+              <p className="mt-4 text-sm text-gray-600">
+                Share this link with people you want in the meeting
+              </p>
 
-    console.log(data);
+              <div className="mt-6 rounded-xl border p-4 flex items-center justify-between">
+                <span className="text-sm max-w-[360px] break-words">{meetingLink}</span>
 
-    if (code) {
-      router.push(`/meeting/${code}`);
-    }
+                <Button
+                  variant="outline"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(meetingLink);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1800);
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                >
+                  <Copy className="mr-2 h-4 w-4" />
+                  {copied ? "Copied" : "Copy"}
+                </Button>
+              </div>
 
-  } catch (error) {
-    handleCreateError(error);
-  } finally {
-    setJoining(false);
-  }
-};
+              <div className="mt-6 text-sm text-gray-900">
+                <p>Dial-in: (US) +1 813-435-1527</p>
+                <p className="mt-2">PIN: 617 403 022#</p>
+              </div>
 
-  const handleScheduleInCalendar = async () => {
-    try {
-      setScheduling(true);
-      setError("");
+              <div className="mt-6 flex flex-col gap-3">
+                <button
+                  className="flex items-center gap-3 text-[#1a73e8] hover:underline"
+                  onClick={() => window.open("#", "_blank")}
+                >
+                  <Phone size={16} />
+                  <span className="text-sm">More phone numbers</span>
+                </button>
 
-      const data = await createMeeting();
-      const code = getMeetingCode(data);
+                <button
+                  className="flex items-center gap-3 text-[#1a73e8] hover:underline"
+                  onClick={() => window.open(meetingLink, "_blank")}
+                >
+                  <svg
+                    width="18"
+                    height="18"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    aria-hidden
+                  >
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <path d="M8.59 13.51L15.42 17.49M15.41 6.51L8.59 10.49" />
+                  </svg>
+                  <span className="text-sm">Share full details</span>
+                </button>
+              </div>
 
-      if (code) {
-        const link = buildMeetingLink(code);
-        
-        // Dynamic time generation: rounded to the next hour/30 min mark
-        const now = new Date();
-        const start = new Date(now);
-        start.setMinutes(Math.ceil(now.getMinutes() / 30) * 30, 0, 0);
-        const end = new Date(start);
-        end.setHours(start.getHours() + 1);
-
-        const formatDate = (d: Date) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-        const datesParam = `${formatDate(start)}/${formatDate(end)}`;
-
-        const title = "Google Meet Video Call";
-        const description = `Join this meeting:\n${link}\n\nMeeting code: ${code}`;
-        
-        const calendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${encodeURIComponent(datesParam)}&details=${encodeURIComponent(description)}&location=${encodeURIComponent(link)}`;
-        
-        // Open the template in a new tab
-        window.open(calendarUrl, "_blank");
-      }
-    } catch (error) {
-      handleCreateError(error);
-    } finally {
-      setScheduling(false);
-      setOpenDropdown(false);
-    }
-  };
-
-  const handleJoinMeeting = async () => {
-    const code = meetingCode.trim();
-
-    if (!code) {
-      return;
-    }
-
-    try {
-      setError("");
-      await getMeetingByCode(code);
-      router.push(`/meeting/${encodeURIComponent(code)}`);
-    } catch (error) {
-      let message = "Meeting not found";
-      
+              <div className="mt-6 flex justify-end">
+                <Button onClick={() => setShowModal(false)}>Done</Button>
+              </div>
+            </div>
+          </div>
+        )}
       if (error instanceof Error) {
         message = error.message;
         // Check if it's an ApiError with status 410 (Gone - meeting expired)
