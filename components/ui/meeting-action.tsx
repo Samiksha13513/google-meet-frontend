@@ -8,6 +8,7 @@ import {
   Calendar,
   Copy,
   X,
+  Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -275,63 +276,92 @@ export function MeetingActions() {
 
       {/* MODAL */}
 
-      {showModal && (
-        <div className="fixed inset-0 z-[999] bg-black/40 flex items-center justify-center">
+   {showModal && (
+  <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
+    <div className="relative w-[450px] rounded-[28px] bg-[#f1f3f4] p-6 shadow-2xl">
+      
+      {/* Close */}
+      <button
+        onClick={() => setShowModal(false)}
+        className="absolute right-5 top-5 rounded-full p-1 text-[#5f6368] hover:bg-black/5"
+      >
+        <X size={22} />
+      </button>
 
-          <div className="w-[520px] rounded-3xl bg-white p-8 relative shadow-2xl">
+      {/* Heading */}
+      <h2 className="text-[20px] font-normal text-[#202124]">
+        Here's your joining info
+      </h2>
 
-            <button
-              onClick={() => setShowModal(false)}
-              className="absolute right-5 top-5"
-            >
-              <X />
-            </button>
+      {/* Description */}
+      <p className="mt-4 text-[15px] leading-6 text-[#5f6368]">
+        Send this to people you want to meet with.
+        <br />
+        Be sure to save it so you can use it later,
+        <br />
+        too.
+      </p>
 
-            <h2 className="text-2xl font-semibold">
+      {/* Info Card */}
+      <div className="mt-6 rounded-[24px] bg-[#e8eaed] p-6">
+        
+        {/* Meeting Link */}
+        <div className="flex items-start justify-between">
+          <span className="max-w-[280px] break-all text-[18px] text-[#202124]">
+            {meetingLink}
+          </span>
 
-              Here&apos;s your joining info
-
-            </h2>
-
-            <p className="mt-4 text-gray-600">
-
-              Share this link with people you
-              want in the meeting
-
-            </p>
-
-            <div className="mt-6 rounded-xl border p-4 flex items-center justify-between">
-
-              <span className="text-sm">
-                {meetingLink}
-              </span>
-
-              <Button
-                variant="outline"
-                onClick={() => {
-                  navigator.clipboard.writeText(
-                    meetingLink
-                  );
-                }}
-              >
-                <Copy className="mr-2 h-4 w-4" />
-                Copy
-              </Button>
-
-            </div>
-
-            <Button
-              onClick={() =>
-                setShowModal(false)
-              }
-              className="mt-6 bg-blue-600"
-            >
-              Done
-            </Button>
-
-          </div>
+          <button
+            onClick={() => navigator.clipboard.writeText(meetingLink)}
+            className="rounded-full p-2 text-[#5f6368] hover:bg-black/5"
+          >
+            <Copy size={22} />
+          </button>
         </div>
-      )}
+
+        {/* Dial In */}
+        <div className="mt-8">
+          <p className="text-[15px] text-[#202124]">
+            Dial-in: (US) +1 813-435-1527
+          </p>
+
+          <p className="mt-2 text-[15px] text-[#202124]">
+            PIN: 617 403 022#
+          </p>
+        </div>
+
+        {/* More phone numbers */}
+        <button className="mt-8 flex items-center gap-3 text-[#1a73e8] hover:underline">
+          <Phone size={18} />
+          <span className="text-[16px]">
+            More phone numbers
+          </span>
+        </button>
+
+        {/* Share full details */}
+        <button className="mt-8 flex items-center gap-3 text-[#1a73e8] hover:underline">
+          <svg
+            width="18"
+            height="18"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <circle cx="18" cy="5" r="3" />
+            <circle cx="6" cy="12" r="3" />
+            <circle cx="18" cy="19" r="3" />
+            <path d="M8.59 13.51L15.42 17.49M15.41 6.51L8.59 10.49" />
+          </svg>
+
+          <span className="text-[16px]">
+            Share full details
+          </span>
+        </button>
+      </div>
+    </div>
+  </div>
+)}
     </>
   );
 }
