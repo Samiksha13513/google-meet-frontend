@@ -1,16 +1,23 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import Image from 'next/image';
 import { googleLogin } from "../services/auth";
+import { hasValidAuthToken } from "@/lib/auth-token";
 
 export default function Home() {
   const router = useRouter();
   const [meetingCode, setMeetingCode] = useState('');
   const [showCodeInput, setShowCodeInput] = useState(false);
+
+  useEffect(() => {
+    if (hasValidAuthToken()) {
+      router.replace("/dashboard");
+    }
+  }, [router]);
 
   const goToMeeting = (code: string) => {
     const trimmed = code.trim();

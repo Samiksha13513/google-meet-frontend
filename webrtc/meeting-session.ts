@@ -21,8 +21,11 @@ type HostChangedPayload = {
 };
 
 type ChatPayload = {
+  id?: string;
   senderId: string;
   senderName: string;
+  senderEmail?: string;
+  senderImage?: string;
   message: string;
   timestamp: number;
 };
@@ -30,11 +33,15 @@ type ChatPayload = {
 type EmojiPayload = {
   senderId: string;
   emoji: string;
+  senderName?: string;
+  senderEmail?: string;
+  senderImage?: string;
 };
 
 export type MeetingSessionCallbacks = {
   onWaitingRoom?: () => void;
   onJoinApproved?: (members: MeetingMember[], isHost: boolean) => void;
+  onChatHistory?: (messages: ChatPayload[]) => void;
   onJoinDenied?: (reason: string) => void;
   onRemoteStreamAdded: (
     socketId: string,
@@ -610,8 +617,9 @@ export class MeetingPeerSession {
       this.callbacks.onWaitingRoom?.();
     });
 
-    this.socket.on("join-approved", async (data: { isHost: boolean, members: MeetingMember[] }) => {
+    this.socket.on("join-approved", async (data: { isHost: boolean, members: MeetingMember[], chatHistory?: ChatPayload[] }) => {
       console.log("[WebRTC:Mesh] join-approved event received. Members count:", data.members.length);
+      this.callbacks.onChatHistory?.(data.chatHistory || []);
       this.callbacks.onJoinApproved?.(data.members, data.isHost);
 
       // We are the joiner: initiate offers to all existing members

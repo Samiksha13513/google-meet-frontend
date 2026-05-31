@@ -39,7 +39,7 @@ import {
 } from "@/lib/display-name";
 import { getMeetingByCode } from "@/lib/api";
 
-const REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "👏", "🎉", "🤔"];
+const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮", "👎"];
 
 type MeetingState =
   | "lobby"
@@ -63,8 +63,11 @@ type Participant = {
 };
 
 type ChatMessage = {
+  id?: string;
   senderId: string;
   senderName: string;
+  senderEmail?: string;
+  senderImage?: string;
   message: string;
   timestamp: number;
 };
@@ -73,6 +76,7 @@ type FloatingReaction = {
   id: number;
   emoji: string;
   senderName: string;
+  senderImage?: string;
   x: number; // Horizontal offset percentage
 };
 
@@ -253,6 +257,7 @@ export default function MeetingRoom() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [showChat, setShowChat] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [unreadMessages, setUnreadMessages] = useState(0);
   const [showParticipantsList, setShowParticipantsList] = useState(false);
   const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
@@ -270,6 +275,8 @@ export default function MeetingRoom() {
   const audioLevelsRef = useRef<Record<string, number>>({});
 
   const emojiRef = useRef<HTMLDivElement>(null);
+  const chatScrollRef = useRef<HTMLDivElement>(null);
+  const showChatRef = useRef(false);
   const screenShareUnbindRef = useRef<(() => void) | null>(null);
   const screenShareSupport = typeof window !== "undefined" ? getScreenShareSupport() : null;
 
@@ -308,6 +315,7 @@ export default function MeetingRoom() {
     setIsHandRaised(false);
     setScreenShareError(null);
     setShowChat(false);
+    setUnreadMessages(0);
     setShowParticipantsList(false);
     setShowEmojiPicker(false);
     setFloatingReactions([]);
@@ -324,6 +332,7 @@ export default function MeetingRoom() {
     });
     setJoinRequests([]);
     setMessages([]);
+    setUnreadMessages(0);
     sessionRef.current?.destroy();
     sessionRef.current = null;
     resetInMeetingUiState();
@@ -417,11 +426,11 @@ export default function MeetingRoom() {
     }
   };
 
-  const triggerFloatingReaction = (emoji: string, senderName: string) => {
+  const triggerFloatingReaction = (emoji: string, senderName: string, senderImage?: string) => {
     reactionIdRef.current += 1;
     const id = reactionIdRef.current;
     const x = 20 + ((id * 37) % 61); // range 20% to 80% width
-    setFloatingReactions((prev) => [...prev, { id, emoji, senderName, x }]);
+    setFloatingReactions((prev) => [...prev, { id, emoji, senderName, senderImage, x }]);
     setTimeout(() => {
       setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
     }, 4000);
@@ -429,7 +438,6 @@ export default function MeetingRoom() {
 
   const handleReaction = (emoji: string) => {
     sessionRef.current?.sendReaction(emoji);
-    triggerFloatingReaction(emoji, "You");
     setShowEmojiPicker(false);
   };
 
@@ -512,6 +520,10 @@ export default function MeetingRoom() {
               isScreenSharing: m.isScreenSharing || false,
             }))
         );
+      },
+      onChatHistory: (chatHistory) => {
+        setMessages(chatHistory);
+        setUnreadMessages(0);
       },
       onJoinDenied: (reason) => {
         setDeniedReason(reason);
@@ -659,12 +671,16 @@ export default function MeetingRoom() {
       },
       onReceiveMessage: (data) => {
         setMessages((prev) => [...prev, data]);
+        if (!showChatRef.current && data.senderId !== socket.id) {
+          setUnreadMessages((prev) => prev + 1);
+        }
       },
       onEmojiReaction: (data) => {
         const name =
+          data.senderName ||
           participants.find((p) => p.socketId === data.senderId)?.displayName ||
           "Signed-in user";
-        triggerFloatingReaction(data.emoji, name);
+        triggerFloatingReaction(data.emoji, data.senderId === socket.id ? "You" : name, data.senderImage);
       },
       onScreenShareStarted: (senderId) => {
         if (senderId === socket.id) return;
@@ -776,6 +792,27 @@ export default function MeetingRoom() {
     document.addEventListener("mousedown", clickOut);
     return () => document.removeEventListener("mousedown", clickOut);
   }, []);
+
+  useEffect(() => {
+    showChatRef.current = showChat;
+    if (showChat) {
+      setUnreadMessages(0);
+      requestAnimationFrame(() => {
+        chatScrollRef.current?.scrollTo({
+          top: chatScrollRef.current.scrollHeight,
+          behavior: "smooth",
+        });
+      });
+    }
+  }, [showChat]);
+
+  useEffect(() => {
+    if (!showChat) return;
+    chatScrollRef.current?.scrollTo({
+      top: chatScrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [messages, showChat]);
 
   // Sync Local stream elements
   useEffect(() => {
@@ -1062,16 +1099,18 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      {/* Floating Emojis rise up effect container */}
+      {/* Floating Meet-style reactions */}
       <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none w-full max-w-2xl h-[calc(100vh-140px)] overflow-hidden">
         {floatingReactions.map((r) => (
           <div
             key={r.id}
             style={{ left: `${r.x}%` }}
-            className="absolute bottom-0 flex flex-col items-center animate-emoji-float text-5xl"
+            className="absolute bottom-0 flex flex-col items-center animate-emoji-float"
           >
-            <span>{r.emoji}</span>
-            <span className="text-[10px] bg-black/60 px-1.5 py-0.5 rounded text-white mt-1 backdrop-blur-sm whitespace-nowrap">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-4xl shadow-2xl ring-1 ring-black/10">
+              {r.emoji}
+            </span>
+            <span className="mt-2 max-w-[96px] truncate rounded-full bg-black/70 px-2.5 py-1 text-[11px] text-white backdrop-blur-sm">
               {r.senderName}
             </span>
           </div>
@@ -1331,30 +1370,45 @@ export default function MeetingRoom() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-4">
+            <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4">
               {messages.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-white/40 text-xs text-center max-w-[200px] mx-auto leading-relaxed">
                   Messages are only visible to active call members and get removed when leaving.
                 </div>
               ) : (
-                messages.map((m, i) => (
-                  <div key={i} className="flex flex-col gap-1">
-                    <div className="flex justify-between items-baseline">
-                      <span className="text-xs font-semibold text-[#8ab4f8] truncate max-w-[150px]">
-                        {m.senderName}
-                      </span>
-                      <span className="text-[10px] text-white/45">
-                        {new Date(m.timestamp).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
+                <div className="flex flex-col gap-4">
+                  {messages.map((m, i) => (
+                    <div key={m.id || `${m.timestamp}-${i}`} className="flex items-start gap-3">
+                      <MeetAvatar
+                        name={m.senderName}
+                        email={m.senderEmail}
+                        image={m.senderImage}
+                        size="sm"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="truncate text-sm font-medium text-white/90">
+                            {m.senderId === socket.id ? "You" : m.senderName}
+                          </span>
+                          <span className="shrink-0 text-[11px] text-white/45">
+                            {new Date(m.timestamp).toLocaleTimeString([], {
+                              hour: "numeric",
+                              minute: "2-digit",
+                            })}
+                          </span>
+                        </div>
+                        {m.senderEmail && (
+                          <div className="truncate text-[11px] text-white/45">
+                            {m.senderEmail}
+                          </div>
+                        )}
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-5 text-white/85">
+                          {m.message}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-sm text-white/90 bg-[#202124] p-3 rounded-xl rounded-tl-none break-words">
-                      {m.message}
-                    </p>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
             </div>
             <form onSubmit={handleSendMessage} className="p-4 border-t border-white/10 flex gap-2">
@@ -1540,12 +1594,13 @@ export default function MeetingRoom() {
               <Smile className="h-5 w-5" />
             </button>
             {showEmojiPicker && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-[#303134] border border-white/10 p-3 rounded-2xl flex gap-3 shadow-2xl scale-100 animate-fade-in z-[60]">
+              <div className="absolute bottom-16 left-1/2 z-[60] flex -translate-x-1/2 gap-1 rounded-full border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
                 {REACTIONS.map((emoji) => (
                   <button
                     key={emoji}
                     onClick={() => handleReaction(emoji)}
-                    className="text-2xl hover:scale-125 transition-transform duration-150"
+                    className="flex h-10 w-10 items-center justify-center rounded-full text-2xl transition-all duration-150 hover:scale-110 hover:bg-white/10"
+                    title={`Send ${emoji}`}
                   >
                     {emoji}
                   </button>
@@ -1597,15 +1652,20 @@ export default function MeetingRoom() {
           {/* Chat Sidebar button */}
           <button
             onClick={() => {
-              setShowChat(!showChat);
+              setShowChat((prev) => !prev);
               setShowParticipantsList(false);
             }}
-            className={`h-11 w-11 rounded-full flex items-center justify-center transition-colors ${
+            className={`relative h-11 w-11 rounded-full flex items-center justify-center transition-colors ${
               showChat ? "bg-[#8ab4f8] text-[#202124]" : "hover:bg-white/5"
             }`}
             title="Chat messages"
           >
             <MessageSquare className="h-5 w-5" />
+            {!showChat && unreadMessages > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#8ab4f8] px-1 text-[11px] font-medium text-[#202124] ring-2 ring-[#202124]">
+                {unreadMessages > 9 ? "9+" : unreadMessages}
+              </span>
+            )}
           </button>
 
           {/* Participants Sidebar button */}

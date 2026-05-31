@@ -49,6 +49,18 @@ export function MeetingActions() {
   const buildMeetingLink = (code: string) =>
     `${window.location.origin}/meeting/${code}`;
 
+  const handleCopyMeetingLink = async () => {
+    if (!meetingLink) return;
+
+    try {
+      await navigator.clipboard.writeText(meetingLink);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setError("Unable to copy meeting link.");
+    }
+  };
+
   const handleCreateForLater = async () => {
     try {
       setCreatingLater(true);
@@ -225,7 +237,7 @@ export function MeetingActions() {
 
    {showModal && (
   <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/30">
-    <div className="relative w-[450px] rounded-[28px] bg-[#f1f3f4] p-6 shadow-2xl">
+    <div className="relative w-[420px] max-w-[calc(100vw-32px)] rounded-[28px] bg-[#f1f3f4] p-5 shadow-2xl">
       
       {/* Close */}
       <button
@@ -250,7 +262,7 @@ export function MeetingActions() {
       </p>
 
       {/* Info Card */}
-      <div className="mt-6 rounded-[24px] bg-[#e8eaed] p-6">
+      <div className="mt-5 rounded-[24px] bg-[#e8eaed] p-5">
         
         {/* Meeting Link */}
         <div className="flex items-start justify-between">
@@ -259,10 +271,16 @@ export function MeetingActions() {
           </span>
 
           <button
-            onClick={() => navigator.clipboard.writeText(meetingLink)}
-            className="rounded-full p-2 text-[#5f6368] hover:bg-black/5"
+            onClick={handleCopyMeetingLink}
+            className="relative rounded-full p-2 text-[#5f6368] hover:bg-black/5"
+            aria-label="Copy meeting link"
           >
             <Copy size={22} />
+            {copied && (
+              <span className="absolute right-0 top-10 rounded-md bg-[#202124] px-2 py-1 text-xs text-white shadow-lg">
+                Copied
+              </span>
+            )}
           </button>
         </div>
 

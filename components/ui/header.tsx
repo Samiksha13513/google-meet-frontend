@@ -4,8 +4,11 @@ import { Menu, HelpCircle, Settings, LayoutGrid } from "lucide-react";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Button } from "@/components/ui/button";
 import Image from "next/image";
+import { useRouter } from "next/navigation";
+import { hasValidAuthToken } from "@/lib/auth-token";
 
 export function Header() {
+  const router = useRouter();
   const currentTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
@@ -31,7 +34,12 @@ export function Header() {
         </Button>
 
         {/* Google Meet Logo */}
- <div className="flex items-center gap-1">
+ <button
+  type="button"
+  onClick={() => router.push(hasValidAuthToken() ? "/dashboard" : "/")}
+  className="flex items-center gap-1 rounded-full pr-3 transition-colors hover:bg-gray-100"
+  aria-label="Go to Google Meet home"
+>
   <Image
     src="/logo.png"
     alt="Google Meet"
@@ -45,7 +53,7 @@ export function Header() {
 >
   Meet
 </span>
-</div>
+</button>
       </div>
 
       {/* Right section */}
