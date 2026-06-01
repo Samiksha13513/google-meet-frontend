@@ -32,7 +32,9 @@ type ChatPayload = {
 
 type EmojiPayload = {
   senderId: string;
+  senderUserId?: string | null;
   emoji: string;
+  timestamp?: number;
   senderName?: string;
   senderEmail?: string;
   senderImage?: string;

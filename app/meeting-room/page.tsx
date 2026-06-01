@@ -80,6 +80,13 @@ type FloatingReaction = {
   x: number; // Horizontal offset percentage
 };
 
+type ReactionBubble = {
+  id: number;
+  emoji: string;
+  senderName: string;
+  timestamp: number;
+};
+
 type JoinRequest = {
   socketId: string;
   displayName: string;
@@ -265,6 +272,7 @@ export default function MeetingRoom() {
   // Reaction picker & anims
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [floatingReactions, setFloatingReactions] = useState<FloatingReaction[]>([]);
+  const [reactionBubbles, setReactionBubbles] = useState<Record<string, ReactionBubble[]>>({});
 
   // Refs
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -319,6 +327,7 @@ export default function MeetingRoom() {
     setShowParticipantsList(false);
     setShowEmojiPicker(false);
     setFloatingReactions([]);
+    setReactionBubbles({});
     clearScreenShareBindings();
   };
 
@@ -426,7 +435,39 @@ export default function MeetingRoom() {
     }
   };
 
-  const triggerFloatingReaction = (emoji: string, senderName: string, senderImage?: string) => {
+  const addReactionBubble = (
+    targetId: string,
+    emoji: string,
+    senderName: string,
+    timestamp: number
+  ) => {
+    reactionIdRef.current += 1;
+    const id = reactionIdRef.current;
+    const bubble: ReactionBubble = { id, emoji, senderName, timestamp };
+    setReactionBubbles((prev) => ({
+      ...prev,
+      [targetId]: [...(prev[targetId] || []), bubble].slice(-4),
+    }));
+
+    window.setTimeout(() => {
+      setReactionBubbles((prev) => {
+        const existing = prev[targetId] || [];
+        const next = existing.filter((item) => item.id !== id);
+        if (next.length === 0) {
+          const updated = { ...prev };
+          delete updated[targetId];
+          return updated;
+        }
+        return { ...prev, [targetId]: next };
+      });
+    }, 3800);
+  };
+
+  const triggerFloatingReaction = (
+    emoji: string,
+    senderName: string,
+    senderImage?: string
+  ) => {
     reactionIdRef.current += 1;
     const id = reactionIdRef.current;
     const x = 20 + ((id * 37) % 61); // range 20% to 80% width
@@ -680,7 +721,10 @@ export default function MeetingRoom() {
           data.senderName ||
           participants.find((p) => p.socketId === data.senderId)?.displayName ||
           "Signed-in user";
-        triggerFloatingReaction(data.emoji, data.senderId === socket.id ? "You" : name, data.senderImage);
+        const senderName = data.senderId === socket.id ? "You" : name;
+        triggerFloatingReaction(data.emoji, senderName, data.senderImage);
+        const targetId = data.senderId === socket.id ? "local" : data.senderId;
+        addReactionBubble(targetId, data.emoji, senderName, data.timestamp || Date.now());
       },
       onScreenShareStarted: (senderId) => {
         if (senderId === socket.id) return;
@@ -1182,6 +1226,19 @@ export default function MeetingRoom() {
                         />
                       </div>
                     )}
+                    {reactionBubbles.local?.length ? (
+                      <div className="absolute top-3 left-3 flex flex-col gap-1">
+                        {reactionBubbles.local.map((reaction) => (
+                          <div
+                            key={reaction.id}
+                            className="flex items-center gap-2 rounded-full bg-black/75 px-2 py-1 text-[11px] text-white shadow-xl"
+                          >
+                            <span className="text-base">{reaction.emoji}</span>
+                            <span className="truncate">{reaction.senderName}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-[10px]">
                       You
                     </div>
@@ -1214,6 +1271,19 @@ export default function MeetingRoom() {
                         />
                       </div>
                     )}
+                    {reactionBubbles[p.socketId]?.length ? (
+                      <div className="absolute top-3 left-3 flex flex-col gap-1">
+                        {reactionBubbles[p.socketId].map((reaction) => (
+                          <div
+                            key={reaction.id}
+                            className="flex items-center gap-2 rounded-full bg-black/75 px-2 py-1 text-[11px] text-white shadow-xl"
+                          >
+                            <span className="text-base">{reaction.emoji}</span>
+                            <span className="truncate">{reaction.senderName}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                     <div className="absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-[10px]">
                       {p.displayName}
                     </div>
@@ -1279,6 +1349,19 @@ export default function MeetingRoom() {
                     )}
                 </div>
               )}
+              {reactionBubbles.local?.length ? (
+                <div className="absolute top-4 left-4 flex flex-col gap-2">
+                  {reactionBubbles.local.map((reaction) => (
+                    <div
+                      key={reaction.id}
+                      className="flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs text-white shadow-xl"
+                    >
+                      <span className="text-lg leading-none">{reaction.emoji}</span>
+                      <span className="truncate">{reaction.senderName}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               {/* Badges */}
               <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10">
                 <span className="max-w-[120px] truncate">{resolvedDisplayName} (You)</span>
@@ -1328,6 +1411,19 @@ export default function MeetingRoom() {
                     </div>
                   </div>
                 )}
+                {reactionBubbles[p.socketId]?.length ? (
+                  <div className="absolute top-4 left-4 flex flex-col gap-2">
+                    {reactionBubbles[p.socketId].map((reaction) => (
+                      <div
+                        key={reaction.id}
+                        className="flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs text-white shadow-xl"
+                      >
+                        <span className="text-lg leading-none">{reaction.emoji}</span>
+                        <span className="truncate">{reaction.senderName}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 {/* Status bar */}
                 <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10 max-w-[80%]">
                   <span className="max-w-[120px] truncate">{p.displayName}</span>
@@ -1484,7 +1580,15 @@ export default function MeetingRoom() {
                       size="sm"
                     />
                     <div className="min-w-0">
-                      <h4 className="truncate text-sm font-medium">{p.displayName}</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="truncate text-sm font-medium">{p.displayName}</h4>
+                        {reactionBubbles[p.socketId]?.[0] ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/90">
+                            <span>{reactionBubbles[p.socketId][0].emoji}</span>
+                            <span>{reactionBubbles[p.socketId][0].senderName}</span>
+                          </span>
+                        ) : null}
+                      </div>
                       <span className="block truncate text-[10px] text-white/50">
                         {p.email || "In the meeting"}
                       </span>
