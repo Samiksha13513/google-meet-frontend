@@ -17,6 +17,11 @@ import {
   X,
   Shield,
   UserX,
+  LayoutGrid,
+  PanelRight,
+  Rows3,
+  Pin,
+  PinOff,
 } from "lucide-react";
 
 import { useParams, useRouter } from "next/navigation";
@@ -48,6 +53,8 @@ type MeetingState =
   | "inMeeting"
   | "ended"
   | "denied";
+
+type MeetingLayout = "auto" | "tiled" | "grid" | "spotlight" | "sidebar";
 
 type Participant = {
   socketId: string;
@@ -129,31 +136,40 @@ const ParticipantVideo = ({
         return;
       }
       setStreamUnavailable(false);
-      video.srcObject = stream;
+      
+      // Avoid duplicate srcObject assignments to prevent annoying video flashes/pauses
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      
       video.play().catch((err) => {
         console.log(`[WebRTC:Video] Autoplay for ${isLocal ? "local" : "remote"} stream failed:`, err);
       });
     };
 
-    const onTrackEnded = () => {
-      const vt = stream.getVideoTracks()[0];
-      if (!vt || vt.readyState === "ended") {
-        setStreamUnavailable(true);
-        detachVideoElement(video);
-      } else {
-        attach();
-      }
+    const handleTrackEvent = () => {
+      attach();
     };
 
     attach();
-    stream.addEventListener("addtrack", attach);
-    stream.addEventListener("removetrack", onTrackEnded);
-    stream.getTracks().forEach((t) => t.addEventListener("ended", onTrackEnded));
+    stream.addEventListener("addtrack", handleTrackEvent);
+    stream.addEventListener("removetrack", handleTrackEvent);
+
+    const tracks = stream.getTracks();
+    tracks.forEach((track) => {
+      track.addEventListener("ended", handleTrackEvent);
+      track.addEventListener("mute", handleTrackEvent);
+      track.addEventListener("unmute", handleTrackEvent);
+    });
 
     return () => {
-      stream.removeEventListener("addtrack", attach);
-      stream.removeEventListener("removetrack", onTrackEnded);
-      stream.getTracks().forEach((t) => t.removeEventListener("ended", onTrackEnded));
+      stream.removeEventListener("addtrack", handleTrackEvent);
+      stream.removeEventListener("removetrack", handleTrackEvent);
+      tracks.forEach((track) => {
+        track.removeEventListener("ended", handleTrackEvent);
+        track.removeEventListener("mute", handleTrackEvent);
+        track.removeEventListener("unmute", handleTrackEvent);
+      });
       detachVideoElement(video);
     };
   }, [stream, isLocal]);
@@ -238,12 +254,12 @@ export default function MeetingRoom() {
   }, []);
 
   const resolvedDisplayName = isAuthenticated ? displayName : (customDisplayName || "Guest");
-  
+
   const [isMicOn, setIsMicOn] = useState(true);
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
-  
+
   const [isHost, setIsHost] = useState(false);
   const [meetingError, setMeetingError] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
@@ -268,6 +284,8 @@ export default function MeetingRoom() {
   const [showParticipantsList, setShowParticipantsList] = useState(false);
   const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
+  const [meetingLayout, setMeetingLayout] = useState<MeetingLayout>("auto");
+  const [showLayoutMenu, setShowLayoutMenu] = useState(false);
 
   // Reaction picker & anims
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -277,12 +295,15 @@ export default function MeetingRoom() {
   // Refs
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
+  const [localStreamForRender, setLocalStreamForRender] = useState<MediaStream | null>(null);
+  const [screenStreamForRender, setScreenStreamForRender] = useState<MediaStream | null>(null);
   const sessionRef = useRef<MeetingPeerSession | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const reactionIdRef = useRef(0);
   const audioLevelsRef = useRef<Record<string, number>>({});
 
   const emojiRef = useRef<HTMLDivElement>(null);
+  const layoutRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const showChatRef = useRef(false);
   const screenShareUnbindRef = useRef<(() => void) | null>(null);
@@ -296,6 +317,7 @@ export default function MeetingRoom() {
     const stream = localStreamRef.current;
     stream?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
+    setLocalStreamForRender(null);
   };
 
   const clearScreenShareBindings = () => {
@@ -326,6 +348,8 @@ export default function MeetingRoom() {
     setUnreadMessages(0);
     setShowParticipantsList(false);
     setShowEmojiPicker(false);
+    setShowLayoutMenu(false);
+    setMeetingLayout("auto");
     setFloatingReactions([]);
     setReactionBubbles({});
     clearScreenShareBindings();
@@ -335,6 +359,7 @@ export default function MeetingRoom() {
     clearScreenShareBindings();
     stopMediaStream(screenStreamRef.current);
     screenStreamRef.current = null;
+    setScreenStreamForRender(null);
     setParticipants((prev) => {
       prev.forEach((p) => stopMediaStream(p.stream));
       return [];
@@ -351,6 +376,7 @@ export default function MeetingRoom() {
     clearScreenShareBindings();
     stopMediaStream(screenStreamRef.current);
     screenStreamRef.current = null;
+    setScreenStreamForRender(null);
     cleanupLiveSession();
     stopPreviewTracks();
     detachVideoElement(localVideoRef.current);
@@ -387,6 +413,7 @@ export default function MeetingRoom() {
     }
     stopMediaStream(screenStreamRef.current);
     screenStreamRef.current = null;
+    setScreenStreamForRender(null);
     setIsScreenSharing(false);
     setPinnedParticipantId((prev) => (prev === "local" ? null : prev));
   };
@@ -418,6 +445,7 @@ export default function MeetingRoom() {
       sessionRef.current?.setLocalMicAudioTrack(micTrack);
 
       screenStreamRef.current = stream;
+      setScreenStreamForRender(stream);
       await sessionRef.current?.startScreenShare(stream);
       setIsScreenSharing(true);
       setPinnedParticipantId("local");
@@ -429,6 +457,7 @@ export default function MeetingRoom() {
     } catch (err) {
       stopMediaStream(stream);
       screenStreamRef.current = null;
+      setScreenStreamForRender(null);
       const message = err instanceof Error ? err.message : "Failed to start screen sharing.";
       setScreenShareError(message);
       console.error("[ScreenShare] start failed:", err);
@@ -480,6 +509,14 @@ export default function MeetingRoom() {
   const handleReaction = (emoji: string) => {
     sessionRef.current?.sendReaction(emoji);
     setShowEmojiPicker(false);
+  };
+
+  const handleSelectParticipant = (participantId: string) => {
+    setPinnedParticipantId((prev) => (prev === participantId ? prev : participantId));
+  };
+
+  const handleToggleParticipantPin = (participantId: string) => {
+    setPinnedParticipantId((prev) => (prev === participantId ? null : participantId));
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
@@ -544,7 +581,7 @@ export default function MeetingRoom() {
       onJoinApproved: (members, isHostRole) => {
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
-        
+
         // Add existing members (excluding local user)
         setParticipants(
           members
@@ -578,20 +615,20 @@ export default function MeetingRoom() {
             return prev.map((p) =>
               p.socketId === socketId
                 ? {
-                    ...p,
-                    stream: remoteStream,
+                  ...p,
+                  stream: remoteStream,
+                  email: p.email || remoteDetails?.email,
+                  image: p.image || remoteDetails?.image,
+                  displayName: getIdentityLabel({
+                    displayName: p.displayName || remoteName,
                     email: p.email || remoteDetails?.email,
-                    image: p.image || remoteDetails?.image,
-                    displayName: getIdentityLabel({
-                      displayName: p.displayName || remoteName,
-                      email: p.email || remoteDetails?.email,
-                    }),
-                    isMicOn: remoteDetails?.isMicOn ?? p.isMicOn,
-                    isCameraOn: remoteDetails?.isCameraOn ?? p.isCameraOn,
-                    isScreenSharing: remoteDetails?.isScreenSharing ?? p.isScreenSharing,
-                    isHandRaised: remoteDetails?.isHandRaised ?? p.isHandRaised,
-                    isHost: remoteDetails?.isHost ?? p.isHost,
-                  }
+                  }),
+                  isMicOn: remoteDetails?.isMicOn ?? p.isMicOn,
+                  isCameraOn: remoteDetails?.isCameraOn ?? p.isCameraOn,
+                  isScreenSharing: remoteDetails?.isScreenSharing ?? p.isScreenSharing,
+                  isHandRaised: remoteDetails?.isHandRaised ?? p.isHandRaised,
+                  isHost: remoteDetails?.isHost ?? p.isHost,
+                }
                 : p
             );
           } else {
@@ -625,22 +662,26 @@ export default function MeetingRoom() {
       onRemoteStatusChanged: (data) => {
         if (data.socketId === socket.id) return;
         setParticipants((prev) =>
-          prev.map((p) =>
-            p.socketId === data.socketId
-              ? {
-                  ...p,
-                  isMicOn: data.isMicOn,
-                  isCameraOn: data.isCameraOn,
-                  isHandRaised: data.isHandRaised ?? p.isHandRaised,
-                  displayName: getIdentityLabel({
-                    displayName: data.displayName || p.displayName,
-                    email: data.email || p.email,
-                  }),
+          prev.map((p) => {
+            if (p.socketId === data.socketId) {
+              // Force React to detect track/stream updates by recreating MediaStream reference
+              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
+              return {
+                ...p,
+                isMicOn: data.isMicOn,
+                isCameraOn: data.isCameraOn,
+                isHandRaised: data.isHandRaised ?? p.isHandRaised,
+                displayName: getIdentityLabel({
+                  displayName: data.displayName || p.displayName,
                   email: data.email || p.email,
-                  image: data.image || p.image,
-                }
-              : p
-          )
+                }),
+                email: data.email || p.email,
+                image: data.image || p.image,
+                stream: streamCopy,
+              };
+            }
+            return p;
+          })
         );
       },
       onJoinRequest: (data) => {
@@ -664,16 +705,16 @@ export default function MeetingRoom() {
             return prev.map((p) =>
               p.socketId === member.socketId
                 ? {
-                    ...p,
-                    displayName: getIdentityLabel(member),
-                    email: member.email || p.email,
-                    image: member.image || p.image,
-                    isMicOn: member.isMicOn,
-                    isCameraOn: member.isCameraOn,
-                    isHandRaised: member.isHandRaised || false,
-                    isHost: member.isHost,
-                    isScreenSharing: member.isScreenSharing || false,
-                  }
+                  ...p,
+                  displayName: getIdentityLabel(member),
+                  email: member.email || p.email,
+                  image: member.image || p.image,
+                  isMicOn: member.isMicOn,
+                  isCameraOn: member.isCameraOn,
+                  isHandRaised: member.isHandRaised || false,
+                  isHost: member.isHost,
+                  isScreenSharing: member.isScreenSharing || false,
+                }
                 : p
             );
           }
@@ -730,16 +771,28 @@ export default function MeetingRoom() {
         if (senderId === socket.id) return;
         setPinnedParticipantId(senderId);
         setParticipants((prev) =>
-          prev.map((p) => (p.socketId === senderId ? { ...p, isScreenSharing: true } : p))
+          prev.map((p) => {
+            if (p.socketId === senderId) {
+              // Recreate the MediaStream reference so React's ParticipantVideo re-triggers the track attachment immediately
+              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
+              return { ...p, isScreenSharing: true, stream: streamCopy };
+            }
+            return p;
+          })
         );
       },
       onScreenShareStopped: (senderId) => {
         if (senderId === socket.id) return;
         setPinnedParticipantId((prev) => (prev === senderId ? null : prev));
         setParticipants((prev) =>
-          prev.map((p) =>
-            p.socketId === senderId ? { ...p, isScreenSharing: false } : p
-          )
+          prev.map((p) => {
+            if (p.socketId === senderId) {
+              // Recreate the MediaStream reference so React's ParticipantVideo re-triggers the track attachment immediately
+              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
+              return { ...p, isScreenSharing: false, stream: streamCopy };
+            }
+            return p;
+          })
         );
       },
       onHandRaisedChanged: ({ senderId, isHandRaised }) => {
@@ -777,6 +830,7 @@ export default function MeetingRoom() {
       stream.getAudioTracks().forEach((t) => (t.enabled = isMicOn));
       stream.getVideoTracks().forEach((t) => (t.enabled = isCameraOn));
       localStreamRef.current = stream;
+      setLocalStreamForRender(stream);
       setMediaError(null);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -792,7 +846,7 @@ export default function MeetingRoom() {
     return () => {
       stopPreviewTracks();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingCode]);
 
   // Validate Code
@@ -832,6 +886,9 @@ export default function MeetingRoom() {
       if (emojiRef.current && !emojiRef.current.contains(event.target as Node)) {
         setShowEmojiPicker(false);
       }
+      if (layoutRef.current && !layoutRef.current.contains(event.target as Node)) {
+        setShowLayoutMenu(false);
+      }
     };
     document.addEventListener("mousedown", clickOut);
     return () => document.removeEventListener("mousedown", clickOut);
@@ -864,7 +921,7 @@ export default function MeetingRoom() {
     if (stream && localVideoRef.current) {
       localVideoRef.current.srcObject = stream;
     }
-  }, [meetingState, isCameraOn, isScreenSharing]);
+  }, [meetingState, isCameraOn, isScreenSharing, meetingLayout, pinnedParticipantId]);
 
   // Refresh screen share + peers after tab focus / network recovery (long meetings).
   useEffect(() => {
@@ -947,7 +1004,7 @@ export default function MeetingRoom() {
 
     return () => {
       cleanupFns.forEach((fn) => fn());
-      void ctx.close().catch(() => {});
+      void ctx.close().catch(() => { });
     };
   }, [participants, meetingState]);
 
@@ -956,7 +1013,7 @@ export default function MeetingRoom() {
     return () => {
       cleanupAll();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // =========================
@@ -1065,6 +1122,18 @@ export default function MeetingRoom() {
   // UI-only: does not affect any meeting logic.
   const totalConferencingUsers = participants.length + 1; // Participants + local user
   const isTwoUp = totalConferencingUsers === 2;
+  const layoutOptions: Array<{
+    id: MeetingLayout;
+    label: string;
+    icon: typeof LayoutGrid;
+  }> = [
+      { id: "auto", label: "Auto", icon: LayoutGrid },
+      { id: "tiled", label: "Tiled", icon: Rows3 },
+      { id: "grid", label: "Grid", icon: LayoutGrid },
+      { id: "spotlight", label: "Spotlight", icon: Pin },
+      { id: "sidebar", label: "Sidebar", icon: PanelRight },
+    ];
+  const activeLayout = layoutOptions.find((option) => option.id === meetingLayout) || layoutOptions[0];
   const orderedParticipants = [...participants].sort((a, b) => {
     if (a.socketId === pinnedParticipantId) return -1;
     if (b.socketId === pinnedParticipantId) return 1;
@@ -1076,35 +1145,115 @@ export default function MeetingRoom() {
   // For 2 participants, Google Meet uses a stable 2-up split on desktop (no auto-fit),
   // and stacks on small screens. For 3+ we use auto-fit/minmax.
   const minTilePx =
-    totalConferencingUsers <= 4 ? 420 : totalConferencingUsers <= 6 ? 340 : 280;
+    meetingLayout === "grid"
+      ? totalConferencingUsers <= 4 ? 320 : 220
+      : totalConferencingUsers <= 4 ? 420 : totalConferencingUsers <= 6 ? 340 : 280;
 
   const gridStyle: React.CSSProperties | undefined = isTwoUp
     ? undefined
     : {
-        gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
-      };
-
-  const sharingParticipant = participants.find((p) => p.isScreenSharing);
-  const presenterId: string | null = isScreenSharing
-    ? "local"
-    : sharingParticipant?.socketId ?? null;
-  const isPresentationMode = Boolean(presenterId);
-  const presenterParticipant =
-    presenterId === "local" ? null : participants.find((p) => p.socketId === presenterId);
-  const presenterStream =
-    presenterId === "local"
-      ? screenStreamRef.current ?? undefined
-      : presenterParticipant?.stream;
-  const presenterName =
-    presenterId === "local" ? resolvedDisplayName : presenterParticipant?.displayName ?? "Participant";
-  const filmstripParticipants = orderedParticipants.filter((p) => p.socketId !== presenterId);
-  const showLocalInFilmstrip = presenterId !== "local";
+      gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
+    };
 
   const hasVisibleVideo = (
     stream: MediaStream | undefined,
     cameraOn: boolean,
     sharing: boolean
   ) => Boolean(stream && (cameraOn || sharing));
+
+  const sharingParticipant = participants.find((p) => p.isScreenSharing);
+  const presenterId: string | null = isScreenSharing
+    ? "local"
+    : sharingParticipant?.socketId ?? null;
+  const layoutWantsStage = meetingLayout === "spotlight" || meetingLayout === "sidebar";
+  const defaultStageParticipantId =
+    activeSpeakerId || participants[0]?.socketId || "local";
+  const stageParticipantId =
+    pinnedParticipantId || presenterId || (layoutWantsStage ? defaultStageParticipantId : null);
+  const useStageLayout =
+    Boolean(stageParticipantId) &&
+    (meetingLayout === "auto" || meetingLayout === "spotlight" || meetingLayout === "sidebar");
+  const presenterParticipant =
+    stageParticipantId === "local" ? null : participants.find((p) => p.socketId === stageParticipantId);
+  const presenterStream =
+    stageParticipantId === "local"
+      ? (isScreenSharing ? screenStreamForRender : localStreamForRender) ?? undefined
+      : presenterParticipant?.stream;
+  const presenterName =
+    stageParticipantId === "local" ? resolvedDisplayName : presenterParticipant?.displayName ?? "Participant";
+  const isStageScreenShare =
+    stageParticipantId === "local"
+      ? isScreenSharing
+      : Boolean(presenterParticipant?.isScreenSharing);
+  const stageHasVisibleVideo =
+    stageParticipantId === "local"
+      ? Boolean(presenterStream && (isCameraOn || isScreenSharing))
+      : hasVisibleVideo(
+        presenterStream,
+        Boolean(presenterParticipant?.isCameraOn),
+        Boolean(presenterParticipant?.isScreenSharing)
+      );
+  const filmstripParticipants = orderedParticipants.filter((p) => p.socketId !== stageParticipantId);
+  const showLocalInFilmstrip = stageParticipantId !== "local";
+
+  const renderReactionBubbles = (targetId: string, compact = false) => {
+    const bubbles = reactionBubbles[targetId];
+    if (!bubbles?.length) return null;
+
+    return (
+      <div className={`absolute ${compact ? "top-2 left-2 gap-1" : "top-4 left-4 gap-2"} z-20 flex flex-col pointer-events-none`}>
+        {bubbles.map((reaction) => (
+          <div
+            key={reaction.id}
+            className={[
+              "flex items-center rounded-full bg-black/70 text-white shadow-xl backdrop-blur-sm",
+              compact ? "gap-1.5 px-2 py-1 text-[11px]" : "gap-2 px-3 py-1 text-xs",
+            ].join(" ")}
+          >
+            <span className={compact ? "text-base leading-none" : "text-lg leading-none"}>
+              {reaction.emoji}
+            </span>
+            <span className="max-w-[120px] truncate">{reaction.senderName}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderTileBadges = ({
+    id,
+    name,
+    host,
+    handRaised,
+    micOn,
+    screenSharing,
+    compact = false,
+  }: {
+    id: string;
+    name: string;
+    host: boolean;
+    handRaised?: boolean;
+    micOn: boolean;
+    screenSharing: boolean;
+    compact?: boolean;
+  }) => (
+    <>
+      {handRaised && (
+        <div className={`absolute ${compact ? "top-2 right-2 h-7 w-7" : "top-4 right-4 h-9 w-9"} z-20 flex items-center justify-center rounded-full bg-yellow-400 text-black shadow-xl`}>
+          <Hand className={compact ? "h-4 w-4" : "h-5 w-5"} />
+        </div>
+      )}
+      <div className={`absolute ${compact ? "bottom-1 left-1 px-2 py-0.5 text-[10px]" : "bottom-3 left-3 px-3 py-1.5 text-xs"} z-20 flex max-w-[80%] items-center gap-2 rounded-full border border-white/10 bg-black/60 font-light tracking-wide backdrop-blur-md`}>
+        <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
+        {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
+        {handRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
+        {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
+        {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
+        {pinnedParticipantId === id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
+      </div>
+    </>
+  );
+  const ActiveLayoutIcon = activeLayout.icon;
 
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
@@ -1164,29 +1313,69 @@ export default function MeetingRoom() {
       {/* Main video area — grid or presenter layout */}
       <div className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 min-h-0">
         <div className="flex-1 flex flex-col justify-center min-h-0 min-w-0">
-          {isPresentationMode ? (
-            <div className="flex flex-1 flex-col md:flex-row min-h-0 gap-2 sm:gap-3 w-full max-w-[1800px] mx-auto">
+          {useStageLayout ? (
+            <div
+              className={[
+                "flex flex-1 flex-col min-h-0 gap-2 sm:gap-3 w-full max-w-[1800px] mx-auto",
+                meetingLayout === "spotlight" ? "" : "md:flex-row",
+              ].join(" ")}
+            >
               <div className="relative flex-1 min-h-[40vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg">
-                {presenterStream ? (
+                {stageHasVisibleVideo ? (
                   <ParticipantVideo
                     stream={presenterStream}
-                    isLocal={presenterId === "local"}
-                    muted={presenterId === "local"}
-                    fit="contain"
+                    isLocal={stageParticipantId === "local"}
+                    muted={stageParticipantId === "local"}
+                    fit={isStageScreenShare ? "contain" : "cover"}
                   />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-white/50">
-                    Connecting to presentation…
+                  <div className="flex h-full flex-col items-center justify-center gap-4 bg-[#3c4043]">
+                    <MeetAvatar
+                      name={presenterName}
+                      email={stageParticipantId === "local" ? (isAuthenticated ? identity.email : undefined) : presenterParticipant?.email}
+                      image={stageParticipantId === "local" ? (isAuthenticated ? identity.image : undefined) : presenterParticipant?.image}
+                      size="xl"
+                    />
+                    <div className="max-w-[70%] truncate text-sm text-white/70">
+                      {stageParticipantId === "local" ? displaySecondary : presenterParticipant?.email || presenterName}
+                    </div>
                   </div>
                 )}
                 <div className="absolute top-3 left-3 flex items-center gap-2 rounded-full border border-white/10 bg-black/70 px-3 py-1.5 text-xs backdrop-blur-md">
-                  <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />
+                  {isStageScreenShare ? (
+                    <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />
+                  ) : (
+                    <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />
+                  )}
                   <span className="max-w-[200px] truncate">
                     {presenterName}
-                    {presenterId === "local" ? " (You)" : ""} is presenting
+                    {stageParticipantId === "local" ? " (You)" : ""}
+                    {isStageScreenShare ? " is presenting" : " is focused"}
                   </span>
                 </div>
-                {presenterId === "local" && isScreenSharing && (
+                {stageParticipantId && renderReactionBubbles(stageParticipantId)}
+                {stageParticipantId && renderTileBadges({
+                  id: stageParticipantId,
+                  name: `${presenterName}${stageParticipantId === "local" ? " (You)" : ""}`,
+                  host: stageParticipantId === "local" ? isHost : Boolean(presenterParticipant?.isHost),
+                  handRaised: stageParticipantId === "local" ? isHandRaised : presenterParticipant?.isHandRaised,
+                  micOn: stageParticipantId === "local" ? isMicOn : Boolean(presenterParticipant?.isMicOn),
+                  screenSharing: isStageScreenShare,
+                })}
+                {stageParticipantId && pinnedParticipantId === stageParticipantId && (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPinnedParticipantId(null);
+                    }}
+                    className="absolute top-3 right-3 z-30 flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-white/15"
+                    title="Remove pin"
+                  >
+                    <PinOff className="h-4 w-4" />
+                  </button>
+                )}
+                {stageParticipantId === "local" && isScreenSharing && (
                   <button
                     type="button"
                     onClick={() => void handleToggleScreenShare()}
@@ -1197,16 +1386,25 @@ export default function MeetingRoom() {
                 )}
               </div>
 
-              <div className="flex shrink-0 gap-2 overflow-x-auto md:flex-col md:overflow-x-hidden md:overflow-y-auto md:w-44 lg:w-52 md:max-h-full pb-1 md:pb-0 no-scrollbar">
+              <div
+                className={[
+                  "flex shrink-0 gap-2 overflow-x-auto pb-1 no-scrollbar",
+                  meetingLayout === "spotlight"
+                    ? "md:overflow-x-auto"
+                    : "md:flex-col md:overflow-x-hidden md:overflow-y-auto md:w-44 lg:w-52 md:max-h-full md:pb-0",
+                ].join(" ")}
+              >
                 {showLocalInFilmstrip && (
                   <div
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 md:w-full shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      meetingLayout === "spotlight" ? "md:w-44" : "md:w-full",
+                      pinnedParticipantId === "local" ? "ring-2 ring-[#8ab4f8]" : "",
                       activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
                     ].join(" ")}
-                    onDoubleClick={() =>
-                      setPinnedParticipantId((prev) => (prev === "local" ? null : "local"))
-                    }
+                    onClick={() => handleSelectParticipant("local")}
+                    onDoubleClick={() => handleToggleParticipantPin("local")}
+                    title="Click to focus yourself"
                   >
                     {isCameraOn && !isScreenSharing ? (
                       <video
@@ -1226,22 +1424,16 @@ export default function MeetingRoom() {
                         />
                       </div>
                     )}
-                    {reactionBubbles.local?.length ? (
-                      <div className="absolute top-3 left-3 flex flex-col gap-1">
-                        {reactionBubbles.local.map((reaction) => (
-                          <div
-                            key={reaction.id}
-                            className="flex items-center gap-2 rounded-full bg-black/75 px-2 py-1 text-[11px] text-white shadow-xl"
-                          >
-                            <span className="text-base">{reaction.emoji}</span>
-                            <span className="truncate">{reaction.senderName}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-[10px]">
-                      You
-                    </div>
+                    {renderReactionBubbles("local", true)}
+                    {renderTileBadges({
+                      id: "local",
+                      name: "You",
+                      host: isHost,
+                      handRaised: isHandRaised,
+                      micOn: isMicOn,
+                      screenSharing: isScreenSharing,
+                      compact: true,
+                    })}
                   </div>
                 )}
 
@@ -1249,15 +1441,15 @@ export default function MeetingRoom() {
                   <div
                     key={p.socketId}
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 md:w-full shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      meetingLayout === "spotlight" ? "md:w-44" : "md:w-full",
                       activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
+                      pinnedParticipantId === p.socketId ? "ring-2 ring-[#8ab4f8]" : "",
                       p.isScreenSharing ? "ring-2 ring-[#8ab4f8]" : "",
                     ].join(" ")}
-                    onDoubleClick={() =>
-                      setPinnedParticipantId((prev) =>
-                        prev === p.socketId ? null : p.socketId
-                      )
-                    }
+                    onClick={() => handleSelectParticipant(p.socketId)}
+                    onDoubleClick={() => handleToggleParticipantPin(p.socketId)}
+                    title="Click to focus participant"
                   >
                     {hasVisibleVideo(p.stream, p.isCameraOn, p.isScreenSharing) ? (
                       <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
@@ -1271,184 +1463,175 @@ export default function MeetingRoom() {
                         />
                       </div>
                     )}
-                    {reactionBubbles[p.socketId]?.length ? (
-                      <div className="absolute top-3 left-3 flex flex-col gap-1">
-                        {reactionBubbles[p.socketId].map((reaction) => (
-                          <div
-                            key={reaction.id}
-                            className="flex items-center gap-2 rounded-full bg-black/75 px-2 py-1 text-[11px] text-white shadow-xl"
-                          >
-                            <span className="text-base">{reaction.emoji}</span>
-                            <span className="truncate">{reaction.senderName}</span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                    <div className="absolute bottom-1 left-1 max-w-[90%] truncate rounded bg-black/60 px-2 py-0.5 text-[10px]">
-                      {p.displayName}
-                    </div>
-                    {p.isScreenSharing && (
-                      <MonitorUp className="absolute top-1 right-1 h-3.5 w-3.5 text-[#8ab4f8]" />
-                    )}
+                    {renderReactionBubbles(p.socketId, true)}
+                    {renderTileBadges({
+                      id: p.socketId,
+                      name: p.displayName,
+                      host: p.isHost,
+                      handRaised: p.isHandRaised,
+                      micOn: p.isMicOn,
+                      screenSharing: p.isScreenSharing,
+                      compact: true,
+                    })}
                   </div>
                 ))}
               </div>
             </div>
           ) : (
-          <div
-            style={gridStyle}
-            className={[
-              "grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden",
-              "place-content-center",
-              isTwoUp ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]" : "max-w-7xl 2xl:max-w-[1600px]",
-            ].join(" ")}
-          >
-            {/* 1. Local Participant Card */}
             <div
+              style={gridStyle}
               className={[
-                "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
-                // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
-                pinnedParticipantId === "local"
-                  ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
-                  : "",
-                activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
-                isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
+                "grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden",
+                "place-content-center",
+                isTwoUp ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]" : "max-w-7xl 2xl:max-w-[1600px]",
               ].join(" ")}
-              onDoubleClick={() =>
-                setPinnedParticipantId((prev) => (prev === "local" ? null : "local"))
-              }
-              title="Double-click to pin yourself"
             >
-              {isCameraOn && !isScreenSharing ? (
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="w-full h-full object-cover rounded-2xl scale-x-[-1]"
-                />
-              ) : isScreenSharing && screenStreamRef.current ? (
-                <ParticipantVideo
-                  stream={screenStreamRef.current}
-                  isLocal
-                  muted
-                  fit="contain"
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-4">
-                  <MeetAvatar
-                    name={resolvedDisplayName}
-                    email={isAuthenticated ? identity.email : undefined}
-                    image={isAuthenticated ? identity.image : undefined}
-                    size="xl"
+              {/* 1. Local Participant Card */}
+              <div
+                className={[
+                  "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                  // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
+                  pinnedParticipantId === "local"
+                    ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
+                    : "",
+                  activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
+                  isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
+                ].join(" ")}
+                onClick={() => handleSelectParticipant("local")}
+                onDoubleClick={() => handleToggleParticipantPin("local")}
+                title="Click to focus yourself"
+              >
+                {isCameraOn && !isScreenSharing ? (
+                  <video
+                    ref={localVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full h-full object-cover rounded-2xl scale-x-[-1]"
                   />
+                ) : isScreenSharing && screenStreamForRender ? (
+                  <ParticipantVideo
+                    stream={screenStreamForRender}
+                    isLocal
+                    muted
+                    fit="contain"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-4">
+                    <MeetAvatar
+                      name={resolvedDisplayName}
+                      email={isAuthenticated ? identity.email : undefined}
+                      image={isAuthenticated ? identity.image : undefined}
+                      size="xl"
+                    />
                     {isAuthenticated && displaySecondary && (
                       <div className="max-w-[70%] truncate text-sm text-white/70">
                         {displaySecondary}
                       </div>
                     )}
-                </div>
-              )}
-              {reactionBubbles.local?.length ? (
-                <div className="absolute top-4 left-4 flex flex-col gap-2">
-                  {reactionBubbles.local.map((reaction) => (
-                    <div
-                      key={reaction.id}
-                      className="flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs text-white shadow-xl"
-                    >
-                      <span className="text-lg leading-none">{reaction.emoji}</span>
-                      <span className="truncate">{reaction.senderName}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {/* Badges */}
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10">
-                <span className="max-w-[120px] truncate">{resolvedDisplayName} (You)</span>
-                {isHost && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
-                {isHandRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
-                {!isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
-                {isScreenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
-              </div>
-            </div>
-
-            {/* 2. Remote Participants Cards */}
-            {orderedParticipants.map((p) => (
-              <div
-                key={p.socketId}
-                className={[
-                  "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
-                  pinnedParticipantId === p.socketId
-                    ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
-                    : "",
-                  activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
-                  isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
-                ].join(" ")}
-                onDoubleClick={() =>
-                  setPinnedParticipantId((prev) =>
-                    prev === p.socketId ? null : p.socketId
-                  )
-                }
-                title="Double-click to pin participant"
-              >
-                {hasVisibleVideo(p.stream, p.isCameraOn, p.isScreenSharing) ? (
-                  <ParticipantVideo
-                    stream={p.stream}
-                    isLocal={false}
-                    muted={false}
-                    fit={p.isScreenSharing ? "contain" : "cover"}
-                  />
-                ) : (
-                  <div className="flex flex-col items-center gap-4">
-                    <MeetAvatar
-                      name={p.displayName}
-                      email={p.email}
-                      image={p.image}
-                      size="xl"
-                    />
-                    <div className="max-w-[70%] truncate text-sm text-white/70">
-                        {p.email || p.displayName}
-                    </div>
                   </div>
                 )}
-                {reactionBubbles[p.socketId]?.length ? (
-                  <div className="absolute top-4 left-4 flex flex-col gap-2">
-                    {reactionBubbles[p.socketId].map((reaction) => (
-                      <div
-                        key={reaction.id}
-                        className="flex items-center gap-2 rounded-full bg-black/70 px-3 py-1 text-xs text-white shadow-xl"
-                      >
-                        <span className="text-lg leading-none">{reaction.emoji}</span>
-                        <span className="truncate">{reaction.senderName}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {/* Status bar */}
-                <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-light tracking-wide flex items-center gap-2 border border-white/10 max-w-[80%]">
-                  <span className="max-w-[120px] truncate">{p.displayName}</span>
-                  {p.isHost && (
-                    <span title="Host">
-                      <Shield className="h-3.5 w-3.5 text-yellow-400" />
-                    </span>
-                  )}
-                  {p.isHandRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
-                  {!p.isMicOn && <MicOff className="h-3 w-3 text-red-400" />}
-                  {p.isScreenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
-                </div>
-                {/* Host Control Actions */}
-                {isHost && (
+                {renderReactionBubbles("local")}
+                {renderTileBadges({
+                  id: "local",
+                  name: `${resolvedDisplayName} (You)`,
+                  host: isHost,
+                  handRaised: isHandRaised,
+                  micOn: isMicOn,
+                  screenSharing: isScreenSharing,
+                })}
+                {pinnedParticipantId === "local" && (
                   <button
-                    onClick={() => handleKick(p.socketId)}
-                    className="absolute top-3 right-3 h-8 w-8 rounded-full bg-black/40 hover:bg-red-500 hover:text-white flex items-center justify-center backdrop-blur-sm transition-all"
-                    title="Remove participant"
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPinnedParticipantId(null);
+                    }}
+                    className="absolute top-3 right-3 z-30 flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-white/15"
+                    title="Remove pin"
                   >
-                    <UserX className="h-4 w-4" />
+                    <PinOff className="h-4 w-4" />
                   </button>
                 )}
               </div>
-            ))}
-          </div>
+
+              {/* 2. Remote Participants Cards */}
+              {orderedParticipants.map((p) => (
+                <div
+                  key={p.socketId}
+                  className={[
+                    "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                    pinnedParticipantId === p.socketId
+                      ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
+                      : "",
+                    activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
+                    isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
+                  ].join(" ")}
+                  onClick={() => handleSelectParticipant(p.socketId)}
+                  onDoubleClick={() => handleToggleParticipantPin(p.socketId)}
+                  title="Click to focus participant"
+                >
+                  {hasVisibleVideo(p.stream, p.isCameraOn, p.isScreenSharing) ? (
+                    <ParticipantVideo
+                      stream={p.stream}
+                      isLocal={false}
+                      muted={false}
+                      fit={p.isScreenSharing ? "contain" : "cover"}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-4">
+                      <MeetAvatar
+                        name={p.displayName}
+                        email={p.email}
+                        image={p.image}
+                        size="xl"
+                      />
+                      <div className="max-w-[70%] truncate text-sm text-white/70">
+                        {p.email || p.displayName}
+                      </div>
+                    </div>
+                  )}
+                  {renderReactionBubbles(p.socketId)}
+                  {renderTileBadges({
+                    id: p.socketId,
+                    name: p.displayName,
+                    host: p.isHost,
+                    handRaised: p.isHandRaised,
+                    micOn: p.isMicOn,
+                    screenSharing: p.isScreenSharing,
+                  })}
+                  {pinnedParticipantId === p.socketId && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setPinnedParticipantId(null);
+                      }}
+                      className="absolute top-3 right-3 z-30 flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-white/15"
+                      title="Remove pin"
+                    >
+                      <PinOff className="h-4 w-4" />
+                    </button>
+                  )}
+                  {/* Host Control Actions */}
+                  {isHost && (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        handleKick(p.socketId);
+                      }}
+                      className={[
+                        "absolute right-3 z-30 h-8 w-8 rounded-full bg-black/40 hover:bg-red-500 hover:text-white flex items-center justify-center backdrop-blur-sm transition-all",
+                        pinnedParticipantId === p.socketId ? "top-14" : "top-3",
+                      ].join(" ")}
+                      title="Remove participant"
+                    >
+                      <UserX className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
@@ -1649,9 +1832,8 @@ export default function MeetingRoom() {
           {/* Audio */}
           <button
             onClick={handleToggleMic}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
-              isMicOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
-            }`}
+            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isMicOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
+              }`}
             title={isMicOn ? "Mute Microphone" : "Unmute Microphone"}
           >
             {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
@@ -1660,9 +1842,8 @@ export default function MeetingRoom() {
           {/* Camera */}
           <button
             onClick={handleToggleCamera}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
-              isCameraOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
-            }`}
+            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isCameraOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
+              }`}
             title={isCameraOn ? "Turn Camera Off" : "Turn Camera On"}
           >
             {isCameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
@@ -1672,9 +1853,8 @@ export default function MeetingRoom() {
           <button
             onClick={() => void handleToggleScreenShare()}
             disabled={!isScreenSharing && screenShareSupport !== null && !screenShareSupport.supported}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-              isScreenSharing ? "bg-[#8ab4f8] text-[#202124] hover:bg-[#a8c7fa]" : "bg-[#3c4043] hover:bg-[#4f5357]"
-            }`}
+            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isScreenSharing ? "bg-[#8ab4f8] text-[#202124] hover:bg-[#a8c7fa]" : "bg-[#3c4043] hover:bg-[#4f5357]"
+              }`}
             title={
               isScreenSharing
                 ? "Stop sharing screen"
@@ -1686,13 +1866,51 @@ export default function MeetingRoom() {
             <MonitorUp className="h-5 w-5" />
           </button>
 
+          {/* Layout picker */}
+          <div className="relative" ref={layoutRef}>
+            <button
+              onClick={() => setShowLayoutMenu((prev) => !prev)}
+              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showLayoutMenu ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
+                }`}
+              title={`Layout: ${activeLayout.label}`}
+            >
+              <ActiveLayoutIcon className="h-5 w-5" />
+            </button>
+            {showLayoutMenu && (
+              <div className="absolute bottom-16 left-1/2 z-[60] w-52 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+                {layoutOptions.map((option) => {
+                  const LayoutIcon = option.icon;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => {
+                        setMeetingLayout(option.id);
+                        setShowLayoutMenu(false);
+                      }}
+                      className={[
+                        "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors",
+                        meetingLayout === option.id
+                          ? "bg-[#8ab4f8] text-[#202124]"
+                          : "text-white/85 hover:bg-white/10",
+                      ].join(" ")}
+                      title={`Use ${option.label} layout`}
+                    >
+                      <LayoutIcon className="h-4 w-4 shrink-0" />
+                      <span>{option.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {/* Smile Reaction button */}
           <div className="relative" ref={emojiRef}>
             <button
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
-                showEmojiPicker ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
-              }`}
+              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showEmojiPicker ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
+                }`}
               title="Send a reaction"
             >
               <Smile className="h-5 w-5" />
@@ -1720,9 +1938,8 @@ export default function MeetingRoom() {
               setIsHandRaised(next);
               sessionRef.current?.sendRaiseHandUpdate(next);
             }}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${
-              isHandRaised ? "bg-yellow-400 text-black hover:bg-yellow-500" : "bg-[#3c4043] hover:bg-[#4f5357]"
-            }`}
+            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isHandRaised ? "bg-yellow-400 text-black hover:bg-yellow-500" : "bg-[#3c4043] hover:bg-[#4f5357]"
+              }`}
             title="Raise hand"
           >
             <Hand className="h-5 w-5" />
@@ -1759,9 +1976,8 @@ export default function MeetingRoom() {
               setShowChat((prev) => !prev);
               setShowParticipantsList(false);
             }}
-            className={`relative h-11 w-11 rounded-full flex items-center justify-center transition-colors ${
-              showChat ? "bg-[#8ab4f8] text-[#202124]" : "hover:bg-white/5"
-            }`}
+            className={`relative h-11 w-11 rounded-full flex items-center justify-center transition-colors ${showChat ? "bg-[#8ab4f8] text-[#202124]" : "hover:bg-white/5"
+              }`}
             title="Chat messages"
           >
             <MessageSquare className="h-5 w-5" />
@@ -1778,9 +1994,8 @@ export default function MeetingRoom() {
               setShowParticipantsList(!showParticipantsList);
               setShowChat(false);
             }}
-            className={`h-11 w-11 rounded-full flex items-center justify-center transition-colors ${
-              showParticipantsList ? "bg-[#8ab4f8] text-[#202124]" : "hover:bg-white/5"
-            }`}
+            className={`h-11 w-11 rounded-full flex items-center justify-center transition-colors ${showParticipantsList ? "bg-[#8ab4f8] text-[#202124]" : "hover:bg-white/5"
+              }`}
             title="Show participants list"
           >
             <Users className="h-5 w-5" />

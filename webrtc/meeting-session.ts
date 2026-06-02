@@ -381,9 +381,12 @@ export class MeetingPeerSession {
     const emitRemoteStream = () => {
       const stream = this.remoteStreams.get(socketId);
       if (!stream) return;
+      // Always construct a fresh wrapper MediaStream instance so the React frontend
+      // is forced to detect the change and re-evaluate track/video elements
+      const unifiedStream = new MediaStream(stream.getTracks());
       this.callbacks.onRemoteStreamAdded(
         socketId,
-        stream,
+        unifiedStream,
         displayName,
         this.remoteDetails.get(socketId)
       );
