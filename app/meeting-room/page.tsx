@@ -300,6 +300,7 @@ export default function MeetingRoom() {
   const sessionRef = useRef<MeetingPeerSession | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const reactionIdRef = useRef(0);
+  const lastLocalReactionRef = useRef<{ emoji: string; pendingEcho: boolean } | null>(null);
   const audioLevelsRef = useRef<Record<string, number>>({});
 
   const emojiRef = useRef<HTMLDivElement>(null);
@@ -507,12 +508,28 @@ export default function MeetingRoom() {
   };
 
   const handleReaction = (emoji: string) => {
+    lastLocalReactionRef.current = { emoji, pendingEcho: true };
     sessionRef.current?.sendReaction(emoji);
+    triggerFloatingReaction(emoji, "You", isAuthenticated ? identity.image : undefined);
+    addReactionBubble("local", emoji, "You", reactionIdRef.current);
+    window.setTimeout(() => {
+      if (lastLocalReactionRef.current?.emoji === emoji) {
+        lastLocalReactionRef.current = null;
+      }
+    }, 2500);
     setShowEmojiPicker(false);
   };
 
   const handleSelectParticipant = (participantId: string) => {
     setPinnedParticipantId((prev) => (prev === participantId ? prev : participantId));
+  };
+
+  const handleLayoutChange = (layout: MeetingLayout) => {
+    setMeetingLayout(layout);
+    setShowLayoutMenu(false);
+    if (layout === "grid" || layout === "tiled") {
+      setPinnedParticipantId(null);
+    }
   };
 
   const handleToggleParticipantPin = (participantId: string) => {
@@ -758,6 +775,16 @@ export default function MeetingRoom() {
         }
       },
       onEmojiReaction: (data) => {
+        if (data.senderId === socket.id) {
+          const lastLocalReaction = lastLocalReactionRef.current;
+          if (
+            lastLocalReaction?.emoji === data.emoji &&
+            lastLocalReaction.pendingEcho
+          ) {
+            lastLocalReactionRef.current = null;
+            return;
+          }
+        }
         const name =
           data.senderName ||
           participants.find((p) => p.socketId === data.senderId)?.displayName ||
@@ -1869,7 +1896,10 @@ export default function MeetingRoom() {
           {/* Layout picker */}
           <div className="relative" ref={layoutRef}>
             <button
-              onClick={() => setShowLayoutMenu((prev) => !prev)}
+              onClick={() => {
+                setShowLayoutMenu((prev) => !prev);
+                setShowEmojiPicker(false);
+              }}
               className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showLayoutMenu ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
                 }`}
               title={`Layout: ${activeLayout.label}`}
@@ -1877,17 +1907,14 @@ export default function MeetingRoom() {
               <ActiveLayoutIcon className="h-5 w-5" />
             </button>
             {showLayoutMenu && (
-              <div className="absolute bottom-16 left-1/2 z-[60] w-52 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+              <div className="fixed bottom-24 left-1/2 z-[60] w-52 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
                 {layoutOptions.map((option) => {
                   const LayoutIcon = option.icon;
                   return (
                     <button
                       key={option.id}
                       type="button"
-                      onClick={() => {
-                        setMeetingLayout(option.id);
-                        setShowLayoutMenu(false);
-                      }}
+                      onClick={() => handleLayoutChange(option.id)}
                       className={[
                         "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors",
                         meetingLayout === option.id
@@ -1908,7 +1935,10 @@ export default function MeetingRoom() {
           {/* Smile Reaction button */}
           <div className="relative" ref={emojiRef}>
             <button
-              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+              onClick={() => {
+                setShowEmojiPicker((prev) => !prev);
+                setShowLayoutMenu(false);
+              }}
               className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showEmojiPicker ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
                 }`}
               title="Send a reaction"
@@ -1916,7 +1946,7 @@ export default function MeetingRoom() {
               <Smile className="h-5 w-5" />
             </button>
             {showEmojiPicker && (
-              <div className="absolute bottom-16 left-1/2 z-[60] flex -translate-x-1/2 gap-1 rounded-full border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+              <div className="fixed bottom-24 left-1/2 z-[60] flex -translate-x-1/2 gap-1 rounded-full border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
                 {REACTIONS.map((emoji) => (
                   <button
                     key={emoji}
