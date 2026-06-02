@@ -302,6 +302,7 @@ export default function MeetingRoom() {
   const reactionIdRef = useRef(0);
   const lastLocalReactionRef = useRef<{ emoji: string; pendingEcho: boolean } | null>(null);
   const audioLevelsRef = useRef<Record<string, number>>({});
+  const participantsRef = useRef<Participant[]>([]);
 
   const emojiRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -371,6 +372,25 @@ export default function MeetingRoom() {
     sessionRef.current?.destroy();
     sessionRef.current = null;
     resetInMeetingUiState();
+  };
+
+  const dedupeParticipants = (items: Participant[]) => {
+    const bySocketId = new Map<string, Participant>();
+    items.forEach((participant) => {
+      if (!participant.socketId || participant.socketId === socket.id) return;
+      const existing = bySocketId.get(participant.socketId);
+      bySocketId.set(participant.socketId, {
+        ...existing,
+        ...participant,
+        stream: participant.stream || existing?.stream,
+      });
+    });
+    return Array.from(bySocketId.values());
+  };
+
+  const upsertParticipant = (participant: Participant) => {
+    if (!participant.socketId || participant.socketId === socket.id) return;
+    setParticipants((prev) => dedupeParticipants([...prev, participant]));
   };
 
   const cleanupAll = () => {
@@ -522,6 +542,9 @@ export default function MeetingRoom() {
 
   const handleSelectParticipant = (participantId: string) => {
     setPinnedParticipantId((prev) => (prev === participantId ? prev : participantId));
+    if (meetingLayout === "grid" || meetingLayout === "tiled") {
+      setMeetingLayout("auto");
+    }
   };
 
   const handleLayoutChange = (layout: MeetingLayout) => {
@@ -600,7 +623,7 @@ export default function MeetingRoom() {
         setMeetingState("inMeeting");
 
         // Add existing members (excluding local user)
-        setParticipants(
+        setParticipants(dedupeParticipants(
           members
             .filter((m) => m.socketId !== socket.id)
             .map((m) => ({
@@ -614,7 +637,7 @@ export default function MeetingRoom() {
               isHost: m.isHost,
               isScreenSharing: m.isScreenSharing || false,
             }))
-        );
+        ));
       },
       onChatHistory: (chatHistory) => {
         setMessages(chatHistory);
@@ -629,7 +652,7 @@ export default function MeetingRoom() {
         setParticipants((prev) => {
           const exists = prev.find((p) => p.socketId === socketId);
           if (exists) {
-            return prev.map((p) =>
+            return dedupeParticipants(prev.map((p) =>
               p.socketId === socketId
                 ? {
                   ...p,
@@ -647,9 +670,9 @@ export default function MeetingRoom() {
                   isHost: remoteDetails?.isHost ?? p.isHost,
                 }
                 : p
-            );
+            ));
           } else {
-            return [
+            return dedupeParticipants([
               ...prev,
               {
                 socketId,
@@ -666,7 +689,7 @@ export default function MeetingRoom() {
                 isHost: remoteDetails?.isHost ?? false,
                 isScreenSharing: false,
               },
-            ];
+            ]);
           }
         });
       },
@@ -717,39 +740,16 @@ export default function MeetingRoom() {
       },
       onParticipantJoined: (member) => {
         if (member.socketId === socket.id) return;
-        setParticipants((prev) => {
-          if (prev.some((p) => p.socketId === member.socketId)) {
-            return prev.map((p) =>
-              p.socketId === member.socketId
-                ? {
-                  ...p,
-                  displayName: getIdentityLabel(member),
-                  email: member.email || p.email,
-                  image: member.image || p.image,
-                  isMicOn: member.isMicOn,
-                  isCameraOn: member.isCameraOn,
-                  isHandRaised: member.isHandRaised || false,
-                  isHost: member.isHost,
-                  isScreenSharing: member.isScreenSharing || false,
-                }
-                : p
-            );
-          }
-
-          return [
-            ...prev,
-            {
-              socketId: member.socketId,
-              displayName: getIdentityLabel(member),
-              email: member.email,
-              image: member.image,
-              isMicOn: member.isMicOn,
-              isCameraOn: member.isCameraOn,
-              isHandRaised: member.isHandRaised || false,
-              isHost: member.isHost,
-              isScreenSharing: member.isScreenSharing || false,
-            },
-          ];
+        upsertParticipant({
+          socketId: member.socketId,
+          displayName: getIdentityLabel(member),
+          email: member.email,
+          image: member.image,
+          isMicOn: member.isMicOn,
+          isCameraOn: member.isCameraOn,
+          isHandRaised: member.isHandRaised || false,
+          isHost: member.isHost,
+          isScreenSharing: member.isScreenSharing || false,
         });
       },
       onJoinRequestCancelled: (data) => {
@@ -787,7 +787,7 @@ export default function MeetingRoom() {
         }
         const name =
           data.senderName ||
-          participants.find((p) => p.socketId === data.senderId)?.displayName ||
+          participantsRef.current.find((p) => p.socketId === data.senderId)?.displayName ||
           "Signed-in user";
         const senderName = data.senderId === socket.id ? "You" : name;
         triggerFloatingReaction(data.emoji, senderName, data.senderImage);
@@ -933,6 +933,10 @@ export default function MeetingRoom() {
       });
     }
   }, [showChat]);
+
+  useEffect(() => {
+    participantsRef.current = participants;
+  }, [participants]);
 
   useEffect(() => {
     if (!showChat) return;
