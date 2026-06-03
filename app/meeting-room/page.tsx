@@ -958,7 +958,7 @@ export default function MeetingRoom() {
         console.log('[WebRTC:Video] Local autoplay failed:', err);
       });
     }
-  }, [meetingState, isCameraOn, isScreenSharing, meetingLayout, pinnedParticipantId]);
+  }, [localStreamForRender, meetingState, isCameraOn, isScreenSharing, meetingLayout, pinnedParticipantId]);
 
   // Refresh screen share + peers after tab focus / network recovery (long meetings).
   useEffect(() => {
