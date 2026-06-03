@@ -544,12 +544,20 @@ export default function MeetingRoom() {
   };
 
   const handleAdmit = (socketId: string) => {
-    sessionRef.current?.approveJoin(socketId);
+    if (sessionRef.current) {
+      sessionRef.current.approveJoin(socketId);
+    } else {
+      socket.emit("approve-join", { roomId: meetingCode, socketId });
+    }
     setJoinRequests((prev) => prev.filter((r) => r.socketId !== socketId));
   };
 
   const handleDeny = (socketId: string) => {
-    sessionRef.current?.denyJoin(socketId);
+    if (sessionRef.current) {
+      sessionRef.current.denyJoin(socketId);
+    } else {
+      socket.emit("deny-join", { roomId: meetingCode, socketId });
+    }
     setJoinRequests((prev) => prev.filter((r) => r.socketId !== socketId));
   };
 
@@ -876,6 +884,61 @@ export default function MeetingRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingCode]);
 
+  // Register preview presence so server can assign host for first opener
+  useEffect(() => {
+    if (!meetingCode) return;
+    // Ensure socket is connected for preview presence
+    if (!socket.connected) socket.connect();
+
+    const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
+    const display = isAuthenticated ? displayName : customDisplayName;
+
+    const onRoomInfo = (data: any) => {
+      if (!data) return;
+      setIsHost(Boolean(data.isHost));
+    };
+
+    const onHostChanged = (data: any) => {
+      setIsHost(Boolean(data && data.hostId === socket.id));
+    };
+
+    const onJoinRequest = (data: { socketId: string; displayName: string; email?: string; image?: string }) => {
+      setJoinRequests((prev) => {
+        if (prev.some((r) => r.socketId === data.socketId)) return prev;
+        return [...prev, { ...data, displayName: data.displayName }];
+      });
+    };
+
+    const onJoinRequestCancelled = (data: { socketId: string }) => {
+      setJoinRequests((prev) => prev.filter((r) => r.socketId !== data.socketId));
+    };
+
+    socket.on("room-info", onRoomInfo);
+    socket.on("host-changed", onHostChanged);
+    socket.on("join-request", onJoinRequest);
+    socket.on("join-request-cancelled", onJoinRequestCancelled);
+
+    socket.emit("preview-open", {
+      roomId: meetingCode,
+      token: token || undefined,
+      displayName: display,
+      isMicOn,
+      isCameraOn,
+    });
+
+    // Ask for latest room info as well
+    socket.emit("get-room-info", { roomId: meetingCode });
+
+    return () => {
+      socket.off("room-info", onRoomInfo);
+      socket.off("host-changed", onHostChanged);
+      socket.off("join-request", onJoinRequest);
+      socket.off("join-request-cancelled", onJoinRequestCancelled);
+      socket.emit("preview-close", { roomId: meetingCode });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingCode, isAuthenticated, customDisplayName, displayName]);
+
   // Validate Code
   useEffect(() => {
     if (!meetingCode) return;
@@ -946,7 +1009,15 @@ export default function MeetingRoom() {
   useEffect(() => {
     const stream = localStreamRef.current;
     if (stream && localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
+      const video = localVideoRef.current;
+      // Avoid duplicate srcObject assignments to prevent flashes
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      // Ensure playback starts (some browsers need explicit play() calls)
+      video.play().catch((err) => {
+        console.log('[WebRTC:Video] Local autoplay failed:', err);
+      });
     }
   }, [meetingState, isCameraOn, isScreenSharing, meetingLayout, pinnedParticipantId]);
 
@@ -1074,6 +1145,7 @@ export default function MeetingRoom() {
         isAuthenticated={isAuthenticated}
         customDisplayName={customDisplayName}
         onCustomDisplayNameChange={setCustomDisplayName}
+        isHost={isHost}
       />
     );
   }

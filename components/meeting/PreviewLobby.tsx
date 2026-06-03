@@ -22,6 +22,7 @@ type PreviewLobbyProps = {
   isAuthenticated: boolean;
   customDisplayName: string;
   onCustomDisplayNameChange: (name: string) => void;
+  isHost?: boolean;
 };
 
 export function PreviewLobby({
@@ -40,6 +41,7 @@ export function PreviewLobby({
   isAuthenticated,
   customDisplayName,
   onCustomDisplayNameChange,
+  isHost,
 }: PreviewLobbyProps) {
   const label = displayName || (isAuthenticated ? "Signed-in user" : "Guest");
   const initial = getDisplayInitial(label);
@@ -184,7 +186,7 @@ export function PreviewLobby({
             className="rounded-full px-8 py-6 text-base font-medium text-[#202124] hover:opacity-90 disabled:opacity-50"
             style={{ backgroundColor: "#8ab4f8" }}
           >
-            {isJoining ? "Joining..." : "Ask to join"}
+            {isJoining ? "Joining..." : isHost ? "Join Now" : "Ask to join"}
           </Button>
         </div>
       </main>
