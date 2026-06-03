@@ -1,6 +1,6 @@
 "use client";
 
-import { Mic, MicOff, Video, VideoOff } from "lucide-react";
+import { ChevronDown, Image as ImageIcon, Mic, MicOff, MoreHorizontal, Video, VideoOff, Volume2 } from "lucide-react";
 
 import { getDisplayInitial } from "@/lib/display-name";
 import { Button } from "@/components/ui/button";
@@ -45,88 +45,182 @@ export function PreviewLobby({
   const initial = getDisplayInitial(label);
 
   return (
-    <div className="fixed inset-0 bg-[#202124] text-white flex flex-col">
-      <header className="h-14 px-6 flex items-center border-b border-white/10">
-        <span className="text-lg font-medium text-[#e8eaed]">Google Meet</span>
-      </header>
-
-      <main className="flex-1 flex flex-col lg:flex-row items-center justify-center gap-6 lg:gap-10 px-4 sm:px-6 py-6 lg:py-8">
-        <div className="relative w-full max-w-2xl aspect-video rounded-2xl overflow-hidden bg-[#3c4043] shadow-lg">
-          <video
-            ref={videoRef}
-            autoPlay
-            muted
-            playsInline
-            className={`w-full h-full object-cover ${isCameraOn ? "block" : "hidden"}`}
-          />
-
-          {!isCameraOn && (
-            <div className="absolute inset-0 flex items-center justify-center bg-[#3c4043]">
-              <div className="flex flex-col items-center gap-3">
-                <div className="h-24 w-24 sm:h-28 sm:w-28 overflow-hidden rounded-full bg-[#8ab4f8] flex items-center justify-center text-4xl font-medium text-[#202124]">
-                  {image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={image}
-                      alt={label}
-                      className="h-full w-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    initial
-                  )}
-                </div>
-                {isAuthenticated && email && (
-                  <p className="max-w-[220px] truncate text-xs text-white/75">{email}</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded-md bg-black/50 px-3 py-1.5 text-sm">
-            <span>{label}</span>
-            {!isMicOn && <MicOff className="h-4 w-4 text-red-400" />}
+    <div className="fixed inset-0 flex flex-col bg-white text-[#202124]">
+      <header className="flex h-16 items-center justify-between px-3 sm:px-6">
+        <div className="flex items-center gap-2">
+          <div className="relative h-6 w-8">
+            <div className="absolute left-0 top-1 h-5 w-6 rounded bg-[#fbbc04]" />
+            <div className="absolute right-0 top-2 h-3 w-3 rounded-sm bg-[#fbbc04]" />
+            <div className="absolute left-1.5 top-3 h-1.5 w-1.5 rounded-full bg-white/80" />
           </div>
+          <span className="text-[28px] font-medium text-[#2b2c30]">Meet</span>
         </div>
 
-        <div className="w-full max-w-sm flex flex-col items-center lg:items-start text-center lg:text-left gap-6">
-          <div>
-            <p className="text-sm text-white/60 mb-1">Ready to join?</p>
-            <h1 className="text-2xl font-normal text-[#e8eaed]">
-              {meetingCode}
-            </h1>
-            <p className="text-sm text-white/50 mt-2">
-              No one else is in the call yet, or others will see you when you join.
-            </p>
+        {isAuthenticated && (
+          <div className="flex items-center gap-3">
+            <div className="hidden text-right text-xs leading-tight text-[#202124] sm:block">
+              {email && <p>{email}</p>}
+              <p>Switch account</p>
+            </div>
+            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#8e24aa] text-base font-medium text-white">
+              {image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={image}
+                  alt={label}
+                  className="h-full w-full object-cover"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                initial
+              )}
+            </div>
+          </div>
+        )}
+      </header>
+
+      <main className="flex flex-1 flex-col items-center justify-center gap-10 px-4 pb-8 pt-4 lg:flex-row lg:gap-24 lg:px-10">
+        <section className="w-full max-w-[668px]">
+          <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-[#3c4043] shadow-sm">
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              className={`h-full w-full object-cover ${isCameraOn ? "block" : "hidden"}`}
+            />
+
+            {!isCameraOn && (
+              <div className="absolute inset-0 flex items-center justify-center bg-[#3c4043]">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-[#78909c] text-4xl font-medium text-white sm:h-28 sm:w-28">
+                    {image ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={image}
+                        alt={label}
+                        className="h-full w-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      initial
+                    )}
+                  </div>
+                  {isAuthenticated && email && (
+                    <p className="max-w-[220px] truncate text-xs text-white/75">{email}</p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/55 to-transparent" />
+
+            <div className="absolute left-4 top-4 max-w-[70%] truncate text-sm font-medium text-white">
+              {label}
+            </div>
+
+            <button
+              type="button"
+              title="More options"
+              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-white hover:bg-white/15"
+            >
+              <MoreHorizontal className="h-5 w-5 rotate-90" />
+            </button>
+
+            <button
+              type="button"
+              title="More controls"
+              className="absolute bottom-4 left-4 flex h-7 w-7 items-center justify-center rounded-full bg-[#8ab4f8] text-[#202124] hover:bg-[#aecbfa]"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+
+            <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4">
+              <button
+                type="button"
+                onClick={onToggleMic}
+                title={isMicOn ? "Turn off microphone" : "Turn on microphone"}
+                className={`flex h-14 w-14 items-center justify-center rounded-full border border-white/80 text-white transition ${
+                  isMicOn ? "bg-black/10 hover:bg-white/15" : "bg-[#d93025] hover:bg-[#b3261e]"
+                }`}
+              >
+                {isMicOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleCamera}
+                title={isCameraOn ? "Turn off camera" : "Turn on camera"}
+                className={`flex h-14 w-14 items-center justify-center rounded-full border border-white/80 text-white transition ${
+                  isCameraOn ? "bg-black/10 hover:bg-white/15" : "bg-[#d93025] hover:bg-[#b3261e]"
+                }`}
+              >
+                {isCameraOn ? <Video className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
+              </button>
+            </div>
+
+            <button
+              type="button"
+              title="Apply visual effects"
+              className="absolute bottom-4 right-4 flex h-12 w-12 items-center justify-center rounded-full border border-white/80 text-white hover:bg-white/15"
+            >
+              <ImageIcon className="h-5 w-5" />
+            </button>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
             <button
               type="button"
-              onClick={onToggleMic}
-              title={isMicOn ? "Turn off microphone" : "Turn on microphone"}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition ${
-                isMicOn ? "bg-[#3c4043] hover:bg-[#5f6368]" : "bg-red-500 hover:bg-red-600"
-              }`}
+              title="Microphone"
+              className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] px-4 text-sm text-[#3c4043] hover:bg-[#f8fafd]"
             >
-              {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+              <span className="flex min-w-0 items-center gap-2">
+                <Mic className="h-4 w-4 shrink-0" />
+                <span className="truncate">Default</span>
+              </span>
+              <ChevronDown className="h-4 w-4 shrink-0" />
             </button>
+
             <button
               type="button"
-              onClick={onToggleCamera}
-              title={isCameraOn ? "Turn off camera" : "Turn on camera"}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition ${
-                isCameraOn ? "bg-[#3c4043] hover:bg-[#5f6368]" : "bg-red-500 hover:bg-red-600"
-              }`}
+              title="Speaker"
+              className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] px-4 text-sm text-[#3c4043] hover:bg-[#f8fafd]"
             >
-              {isCameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
+              <span className="flex min-w-0 items-center gap-2">
+                <Volume2 className="h-4 w-4 shrink-0" />
+                <span className="truncate">Default</span>
+              </span>
+              <ChevronDown className="h-4 w-4 shrink-0" />
+            </button>
+
+            <button
+              type="button"
+              title="Camera"
+              className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] px-4 text-sm text-[#3c4043] hover:bg-[#f8fafd]"
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <Video className="h-4 w-4 shrink-0" />
+                <span className="truncate">Camera</span>
+              </span>
+              <ChevronDown className="h-4 w-4 shrink-0" />
             </button>
           </div>
+        </section>
+
+        <section className="flex w-full max-w-[360px] flex-col items-center text-center">
+          <h1 className="text-[28px] font-normal leading-tight text-[#202124]">Ready to join?</h1>
+
+          <div className="mt-5 flex h-6 w-6 items-center justify-center rounded-full bg-[#546e7a] text-xs font-medium text-white">
+            {initial}
+          </div>
+          <p className="mt-3 max-w-[280px] truncate text-sm font-medium text-[#202124]">
+            {label} is in this call
+          </p>
 
           {!isAuthenticated && (
-            <div className="w-full flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <label htmlFor="displayNameInput" className="text-left text-xs font-semibold text-white/70 uppercase tracking-wider">
+            <div className="mt-5 flex w-full flex-col gap-4">
+              <div className="flex flex-col gap-2 text-left">
+                <label htmlFor="displayNameInput" className="text-xs font-semibold text-[#5f6368]">
                   Your Display Name
                 </label>
                 <input
@@ -135,21 +229,21 @@ export function PreviewLobby({
                   value={customDisplayName}
                   onChange={(e) => onCustomDisplayNameChange(e.target.value)}
                   placeholder="Enter your name to join"
-                  className="w-full bg-[#3c4043]/50 border border-white/10 hover:border-white/30 focus:border-[#8ab4f8] focus:bg-[#3c4043] rounded-lg px-4 py-3 text-sm text-white placeholder-white/40 outline-none transition duration-150 ease-in-out shadow-sm"
+                  className="w-full rounded-lg border border-[#dadce0] bg-white px-4 py-3 text-sm text-[#202124] outline-none transition focus:border-[#1a73e8]"
                   maxLength={40}
                 />
               </div>
 
               <div className="flex items-center gap-2 my-1">
-                <div className="flex-1 h-px bg-white/10" />
-                <span className="text-xs text-white/40 font-medium uppercase tracking-wider">or</span>
-                <div className="flex-1 h-px bg-white/10" />
+                <div className="h-px flex-1 bg-[#dadce0]" />
+                <span className="text-xs font-medium text-[#5f6368]">or</span>
+                <div className="h-px flex-1 bg-[#dadce0]" />
               </div>
 
               <button
                 type="button"
                 onClick={() => googleLogin(typeof window !== "undefined" ? window.location.pathname : "/dashboard")}
-                className="w-full flex items-center justify-center gap-3 bg-white hover:bg-neutral-100 text-neutral-850 rounded-lg px-4 py-3 text-sm font-semibold transition duration-150 shadow-sm border border-neutral-250 cursor-pointer"
+                className="flex w-full cursor-pointer items-center justify-center gap-3 rounded-lg border border-[#dadce0] bg-white px-4 py-3 text-sm font-semibold text-[#202124] transition hover:bg-[#f8fafd]"
               >
                 <svg className="h-5 w-5 shrink-0" viewBox="0 0 24 24" width="24" height="24">
                   <path
@@ -175,18 +269,25 @@ export function PreviewLobby({
           )}
 
           {mediaError && (
-            <p className="text-sm text-red-400 w-full">{mediaError}</p>
+            <p className="mt-4 w-full text-sm text-[#d93025]">{mediaError}</p>
           )}
 
           <Button
             onClick={onJoinNow}
             disabled={isJoining || !!mediaError || (!isAuthenticated && !customDisplayName.trim())}
-            className="rounded-full px-8 py-6 text-base font-medium text-[#202124] hover:opacity-90 disabled:opacity-50"
-            style={{ backgroundColor: "#8ab4f8" }}
+            className="mt-7 h-14 w-full max-w-[228px] rounded-full bg-[#0b57d0] text-sm font-medium text-white ring-2 ring-[#0b57d0] ring-offset-2 ring-offset-white hover:bg-[#0842a0] disabled:opacity-50"
           >
-            {isJoining ? "Joining..." : "Ask to join"}
+            {isJoining ? "Joining..." : "Join now"}
           </Button>
-        </div>
+
+          <button
+            type="button"
+            className="mt-7 flex h-9 items-center gap-3 rounded-full border border-[#dadce0] px-5 text-sm font-medium text-[#0b57d0] hover:bg-[#f8fafd]"
+          >
+            Other ways to join
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        </section>
       </main>
     </div>
   );
