@@ -1088,7 +1088,6 @@ export default function MeetingRoom() {
         videoRef={localVideoRef}
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
-        isJoining={false}
         mediaError={mediaError}
         onToggleMic={handleToggleMic}
         onToggleCamera={handleToggleCamera}
