@@ -581,6 +581,8 @@ export default function MeetingRoom() {
 
   const handleJoinNow = async () => {
     if (!meetingCode) return;
+    if (isJoining) return; // prevent duplicate clicks
+    if (sessionRef.current?.isActive()) return;
 
     setIsJoining(true);
 
