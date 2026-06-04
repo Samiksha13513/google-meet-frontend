@@ -153,7 +153,7 @@ export function MeetingActions() {
           </div>
 
           {openDropdown && (
-            <div className="absolute left-0 top-16 z-50 w-[300px] rounded-2xl border bg-white p-2 shadow-xl">
+            <div className="absolute left-0 top-16 z-50 w-[300px] rounded-2xl  bg-gray-100 p-2 shadow-xl">
 
               {/* CREATE LATER */}
 
@@ -227,6 +227,7 @@ export function MeetingActions() {
   Join
 </Button>
       </div>
+
 
       {error && (
         <p className="mt-3 text-sm text-[#d93025]" role="alert">

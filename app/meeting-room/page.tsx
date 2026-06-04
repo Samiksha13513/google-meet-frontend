@@ -264,6 +264,7 @@ export default function MeetingRoom() {
   const [meetingError, setMeetingError] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [screenShareError, setScreenShareError] = useState<string | null>(null);
+  const [isJoining, setIsJoining] = useState(false);
   const [, setPermissionRequested] = useState(false);
   const [deniedReason, setDeniedReason] = useState("Host denied your request");
 
@@ -581,21 +582,26 @@ export default function MeetingRoom() {
   const handleJoinNow = async () => {
     if (!meetingCode) return;
 
-    setMeetingState("waiting");
+    setIsJoining(true);
 
     if (!socket.connected) {
       socket.connect();
     }
 
     const stream = localStreamRef.current;
-    if (!stream) return;
+    if (!stream) {
+      setIsJoining(false);
+      return;
+    }
 
     // Create session
     const session = new MeetingPeerSession(meetingCode, socket, stream, {
       onWaitingRoom: () => {
+        setIsJoining(false);
         setMeetingState("waiting");
       },
       onJoinApproved: (members, isHostRole) => {
+        setIsJoining(false);
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
 
@@ -621,6 +627,7 @@ export default function MeetingRoom() {
         setUnreadMessages(0);
       },
       onJoinDenied: (reason) => {
+        setIsJoining(false);
         setDeniedReason(reason);
         setMeetingState("denied");
       },
@@ -839,7 +846,8 @@ export default function MeetingRoom() {
     const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
 
     sessionRef.current = session;
-    await session.start({
+    try {
+      await session.start({
       displayName: isAuthenticated ? displayName : customDisplayName,
       email: isAuthenticated ? identity.email : undefined,
       image: isAuthenticated ? identity.image : undefined,
@@ -847,6 +855,10 @@ export default function MeetingRoom() {
       isMicOn,
       isCameraOn,
     });
+  } catch (error) {
+      setIsJoining(false);
+      setMeetingError(error instanceof Error ? error.message : "Unable to join meeting.");
+    }
   };
 
   // Camera & Mic setup
@@ -1084,7 +1096,7 @@ export default function MeetingRoom() {
         isAuthenticated={isAuthenticated}
         customDisplayName={customDisplayName}
         onCustomDisplayNameChange={setCustomDisplayName}
-        
+        isJoining={isJoining}
       />
     );
   }
