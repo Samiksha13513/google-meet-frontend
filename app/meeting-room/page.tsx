@@ -55,7 +55,7 @@ type MeetingState =
   | "ended"
   | "denied";
 
-type MeetingLayout = "auto" | "tiled" | "grid" | "spotlight" | "sidebar";
+type MeetingLayout = "auto" | "tiled" | "spotlight" | "sidebar";
 
 type Participant = {
   socketId: string;
@@ -350,6 +350,7 @@ export default function MeetingRoom() {
   const [chatInput, setChatInput] = useState("");
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [showParticipantsList, setShowParticipantsList] = useState(false);
+  const [showAdmitGuestsDialog, setShowAdmitGuestsDialog] = useState(false);
   const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [meetingLayout, setMeetingLayout] = useState<MeetingLayout>("auto");
@@ -435,6 +436,7 @@ export default function MeetingRoom() {
     setShowChat(false);
     setUnreadMessages(0);
     setShowParticipantsList(false);
+    setShowAdmitGuestsDialog(false);
     setShowEmojiPicker(false);
     setShowLayoutMenu(false);
     setShowAudioDeviceMenu(false);
@@ -620,7 +622,6 @@ export default function MeetingRoom() {
     screenStreamRef.current = null;
     setScreenStreamForRender(null);
     setIsScreenSharing(false);
-    setPinnedParticipantId((prev) => (prev === "local" ? null : prev));
   };
 
   const handleToggleScreenShare = async () => {
@@ -661,7 +662,6 @@ export default function MeetingRoom() {
       setScreenStreamForRender(stream);
       await sessionRef.current?.startScreenShare(stream);
       setIsScreenSharing(true);
-      setPinnedParticipantId("local");
       setParticipants((prev) =>
         prev.map((p) => {
           if (!p.isScreenSharing) return p;
@@ -746,9 +746,6 @@ export default function MeetingRoom() {
   const handleLayoutChange = (layout: MeetingLayout) => {
     setMeetingLayout(layout);
     setShowLayoutMenu(false);
-    if (layout === "grid" || layout === "tiled") {
-      setPinnedParticipantId(null);
-    }
   };
 
   const handleToggleParticipantPin = (participantId: string) => {
@@ -770,6 +767,25 @@ export default function MeetingRoom() {
   const handleDeny = (socketId: string) => {
     sessionRef.current?.denyJoin(socketId);
     setJoinRequests((prev) => prev.filter((r) => r.socketId !== socketId));
+  };
+
+  const handleOpenAdmitGuestsDialog = () => {
+    setShowAdmitGuestsDialog(true);
+    setShowParticipantsList(false);
+  };
+
+  const handleAdmitGuestFromDialog = (socketId: string) => {
+    handleAdmit(socketId);
+    if (joinRequests.length <= 1) {
+      setShowAdmitGuestsDialog(false);
+    }
+  };
+
+  const handleDenyGuestFromDialog = (socketId: string) => {
+    handleDeny(socketId);
+    if (joinRequests.length <= 1) {
+      setShowAdmitGuestsDialog(false);
+    }
   };
 
   const handleKick = (socketId: string) => {
@@ -1037,7 +1053,6 @@ export default function MeetingRoom() {
           void endScreenShare();
         }
 
-        setPinnedParticipantId(senderId);
         setParticipants((prev) =>
           prev.map((p) => {
             if (p.socketId === senderId || p.isScreenSharing) {
@@ -1050,7 +1065,6 @@ export default function MeetingRoom() {
       },
       onScreenShareStopped: (senderId) => {
         if (senderId === socket.id) return;
-        setPinnedParticipantId((prev) => (prev === senderId ? null : prev));
         setParticipants((prev) =>
           prev.map((p) => {
             if (p.socketId === senderId) {
@@ -1493,32 +1507,10 @@ export default function MeetingRoom() {
   }> = [
       { id: "auto", label: "Auto", icon: LayoutGrid },
       { id: "tiled", label: "Tiled", icon: Rows3 },
-      { id: "grid", label: "Grid", icon: LayoutGrid },
       { id: "spotlight", label: "Spotlight", icon: Pin },
       { id: "sidebar", label: "Sidebar", icon: PanelRight },
     ];
   const activeLayout = layoutOptions.find((option) => option.id === meetingLayout) || layoutOptions[0];
-  const orderedParticipants = [...participants].sort((a, b) => {
-    if (a.socketId === pinnedParticipantId) return -1;
-    if (b.socketId === pinnedParticipantId) return 1;
-    if (a.isScreenSharing && !b.isScreenSharing) return -1;
-    if (!a.isScreenSharing && b.isScreenSharing) return 1;
-    return 0;
-  });
-
-  // For 2 participants, Google Meet uses a stable 2-up split on desktop (no auto-fit),
-  // and stacks on small screens. For 3+ we use auto-fit/minmax.
-  const minTilePx =
-    meetingLayout === "grid"
-      ? totalConferencingUsers <= 4 ? 320 : 220
-      : totalConferencingUsers <= 4 ? 420 : totalConferencingUsers <= 6 ? 340 : 280;
-
-  const gridStyle: React.CSSProperties | undefined = isTwoUp
-    ? undefined
-    : {
-      gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
-    };
-
   const hasVisibleVideo = (
     stream: MediaStream | undefined,
     cameraOn: boolean,
@@ -1529,14 +1521,49 @@ export default function MeetingRoom() {
   const presenterId: string | null = isScreenSharing
     ? "local"
     : sharingParticipant?.socketId ?? null;
-  const layoutWantsStage = meetingLayout === "spotlight" || meetingLayout === "sidebar";
+  const effectiveLayout: MeetingLayout =
+    meetingLayout === "auto"
+      ? pinnedParticipantId || presenterId
+        ? "spotlight"
+        : totalConferencingUsers >= 7
+          ? "sidebar"
+          : activeSpeakerId && totalConferencingUsers > 2
+            ? "sidebar"
+            : "tiled"
+      : meetingLayout;
+  const layoutWantsStage =
+    effectiveLayout === "spotlight" || effectiveLayout === "sidebar";
   const defaultStageParticipantId =
     activeSpeakerId || participants[0]?.socketId || "local";
   const stageParticipantId =
     pinnedParticipantId || presenterId || (layoutWantsStage ? defaultStageParticipantId : null);
   const useStageLayout =
-    Boolean(stageParticipantId) &&
-    (meetingLayout === "auto" || meetingLayout === "spotlight" || meetingLayout === "sidebar");
+    Boolean(stageParticipantId) && layoutWantsStage;
+  const orderedParticipants = [...participants].sort((a, b) => {
+    if (a.socketId === pinnedParticipantId) return -1;
+    if (b.socketId === pinnedParticipantId) return 1;
+    if (a.socketId === presenterId) return -1;
+    if (b.socketId === presenterId) return 1;
+    if (a.socketId === activeSpeakerId) return -1;
+    if (b.socketId === activeSpeakerId) return 1;
+    return 0;
+  });
+  const visibleGridCount = totalConferencingUsers;
+  const minTilePx =
+    visibleGridCount <= 1
+      ? 620
+      : visibleGridCount === 2
+        ? 420
+        : visibleGridCount <= 4
+          ? 300
+          : visibleGridCount <= 9
+            ? 220
+            : 170;
+  const gridStyle: React.CSSProperties | undefined = isTwoUp
+    ? undefined
+    : {
+      gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
+    };
   const presenterParticipant =
     stageParticipantId === "local" ? null : participants.find((p) => p.socketId === stageParticipantId);
   const presenterStream =
@@ -1559,6 +1586,7 @@ export default function MeetingRoom() {
       );
   const filmstripParticipants = orderedParticipants.filter((p) => p.socketId !== stageParticipantId);
   const showLocalInFilmstrip = stageParticipantId !== "local";
+  const stageLayoutIsSpotlight = effectiveLayout === "spotlight";
 
   const renderReactionBubbles = (targetId: string, compact = false) => {
     const bubbles = reactionBubbles[targetId];
@@ -1662,7 +1690,7 @@ export default function MeetingRoom() {
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
       {/* Floating Join Request Modal (Host only) */}
       {isHost && joinRequests.length > 0 && (
-        <div className="absolute right-4 top-4 z-50 w-[min(360px,calc(100vw-32px))] rounded-2xl border border-white/10 bg-[#2d2e30] p-4 shadow-2xl animate-fade-in">
+        <div className="absolute right-4 top-4 z-50 w-[min(372px,calc(100vw-32px))] rounded-[28px] border border-white/10 bg-[#2d2e30] p-4 shadow-2xl animate-fade-in">
           <div className="flex items-start gap-3">
             <MeetAvatar
               name={joinRequests[0].displayName}
@@ -1671,7 +1699,9 @@ export default function MeetingRoom() {
               size="md"
             />
             <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-medium text-white/90">Someone wants to join</h3>
+              <h3 className="text-sm font-medium text-white/90">
+                {joinRequests.length === 1 ? "Someone wants to join" : `${joinRequests.length} people want to join`}
+              </h3>
               <p className="mt-1 truncate text-sm text-white">{joinRequests[0].displayName}</p>
               {joinRequests[0].email && (
                 <p className="truncate text-xs text-white/55">{joinRequests[0].email}</p>
@@ -1686,12 +1716,86 @@ export default function MeetingRoom() {
               Deny
             </button>
             <button
-              onClick={() => handleAdmit(joinRequests[0].socketId)}
+              onClick={handleOpenAdmitGuestsDialog}
               className="rounded-full bg-[#8ab4f8] px-5 py-2 text-sm font-medium text-[#202124] hover:bg-[#a8c7fa] transition-colors"
             >
-              Admit
+              Admit guest
             </button>
           </div>
+        </div>
+      )}
+
+      {isHost && showAdmitGuestsDialog && joinRequests.length > 0 && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px] animate-fade-in">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admit-guests-title"
+            className="w-full max-w-[448px] overflow-hidden rounded-[28px] bg-[#f8fafd] text-[#202124] shadow-[0_16px_48px_rgba(0,0,0,0.32)]"
+          >
+            <div className="flex items-center justify-between px-6 pb-2 pt-5">
+              <div className="min-w-0">
+                <h2 id="admit-guests-title" className="text-[22px] font-normal leading-7 tracking-normal">
+                  Admit guests?
+                </h2>
+                <p className="mt-1 text-sm leading-5 text-[#5f6368]">
+                  {joinRequests.length === 1
+                    ? "Someone wants to join this meeting"
+                    : `${joinRequests.length} people want to join this meeting`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdmitGuestsDialog(false)}
+                className="ml-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#5f6368] transition-colors hover:bg-[#e8eaed]"
+                aria-label="Close admit guests"
+                title="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[min(52vh,360px)] overflow-y-auto px-2 pb-2">
+              {joinRequests.map((request) => (
+                <div
+                  key={request.socketId}
+                  className="mx-2 flex items-center gap-3 rounded-2xl px-4 py-3 transition-colors hover:bg-[#eef3fb]"
+                >
+                  <MeetAvatar
+                    name={request.displayName}
+                    email={request.email}
+                    image={request.image}
+                    size="md"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] font-medium leading-5 text-[#202124]">
+                      {request.displayName}
+                    </p>
+                    <p className="truncate text-[13px] leading-5 text-[#5f6368]">
+                      {request.email || "Guest"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-[#e8eaed] px-6 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => handleDenyGuestFromDialog(joinRequests[0].socketId)}
+                className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
+              >
+                Deny entry
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAdmitGuestFromDialog(joinRequests[0].socketId)}
+                className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#1765cc]"
+              >
+                Admit
+              </button>
+            </div>
+          </section>
         </div>
       )}
 
@@ -1720,10 +1824,10 @@ export default function MeetingRoom() {
             <div
               className={[
                 "flex flex-1 flex-col min-h-0 gap-2 sm:gap-3 w-full max-w-[1800px] mx-auto",
-                meetingLayout === "spotlight" ? "" : "md:flex-row",
+                stageLayoutIsSpotlight ? "" : "md:flex-row",
               ].join(" ")}
             >
-              <div className="relative flex-1 min-h-[40vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg">
+              <div className="relative flex-1 min-h-[38vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg transition-all duration-300">
                 {stageHasVisibleVideo ? (
                   <ParticipantVideo
                     stream={presenterStream}
@@ -1793,7 +1897,7 @@ export default function MeetingRoom() {
               <div
                 className={[
                   "flex shrink-0 gap-2 overflow-x-auto pb-1 no-scrollbar",
-                  meetingLayout === "spotlight"
+                  stageLayoutIsSpotlight
                     ? "md:overflow-x-auto"
                     : "md:flex-col md:overflow-x-hidden md:overflow-y-auto md:w-44 lg:w-52 md:max-h-full md:pb-0",
                 ].join(" ")}
@@ -1801,10 +1905,10 @@ export default function MeetingRoom() {
                 {showLocalInFilmstrip && (
                   <div
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
-                      meetingLayout === "spotlight" ? "md:w-44" : "md:w-full",
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10 transition-all duration-300",
+                      stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
                       pinnedParticipantId === "local" ? "ring-2 ring-[#8ab4f8]" : "",
-                      activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
+                      activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                     ].join(" ")}
                     onClick={() => handleSelectParticipant("local")}
                     onDoubleClick={() => handleToggleParticipantPin("local")}
@@ -1845,9 +1949,9 @@ export default function MeetingRoom() {
                   <div
                     key={p.socketId}
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
-                      meetingLayout === "spotlight" ? "md:w-44" : "md:w-full",
-                      activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10 transition-all duration-300",
+                      stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
+                      activeSpeakerId === p.socketId ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                       pinnedParticipantId === p.socketId ? "ring-2 ring-[#8ab4f8]" : "",
                       p.isScreenSharing ? "ring-2 ring-[#8ab4f8]" : "",
                     ].join(" ")}
@@ -1898,14 +2002,17 @@ export default function MeetingRoom() {
               {/* 1. Local Participant Card */}
               <div
                 className={[
-                  "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                  "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center transition-all duration-300",
                   // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
-                  pinnedParticipantId === "local"
+                  pinnedParticipantId === "local" || isScreenSharing
                     ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                     : "",
-                  activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
+                  activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                   isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
                 ].join(" ")}
+                style={{
+                  order: isScreenSharing || pinnedParticipantId === "local" ? -20 : presenterId || pinnedParticipantId ? 10 : 0,
+                }}
                 onClick={() => handleSelectParticipant("local")}
                 onDoubleClick={() => handleToggleParticipantPin("local")}
                 title="Click to focus yourself"
@@ -1969,13 +2076,23 @@ export default function MeetingRoom() {
                 <div
                   key={p.socketId}
                   className={[
-                    "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
-                    pinnedParticipantId === p.socketId
+                    "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center transition-all duration-300",
+                    pinnedParticipantId === p.socketId || p.isScreenSharing
                       ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                       : "",
-                    activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
+                    activeSpeakerId === p.socketId ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                     isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
                   ].join(" ")}
+                  style={{
+                    order:
+                      p.socketId === pinnedParticipantId
+                        ? -30
+                        : p.socketId === presenterId
+                          ? -20
+                          : p.socketId === activeSpeakerId
+                            ? -10
+                            : 0,
+                  }}
                   onClick={() => handleSelectParticipant(p.socketId)}
                   onDoubleClick={() => handleToggleParticipantPin(p.socketId)}
                   title="Click to focus participant"
