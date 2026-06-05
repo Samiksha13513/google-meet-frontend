@@ -157,6 +157,50 @@ export class MeetingPeerSession {
     this.localMicAudioTrack = track;
   }
 
+  async replaceLocalTrack(kind: "audio" | "video", track: MediaStreamTrack | null): Promise<void> {
+    const oldTrack =
+      kind === "audio" ? this.localMicAudioTrack : this.localCameraVideoTrack;
+
+    if (kind === "audio") {
+      this.localMicAudioTrack = track;
+    } else {
+      this.localCameraVideoTrack = track;
+    }
+
+    if (oldTrack && oldTrack !== track) {
+      this.localStream.removeTrack(oldTrack);
+    }
+    if (track && !this.localStream.getTracks().some((streamTrack) => streamTrack.id === track.id)) {
+      this.localStream.addTrack(track);
+    }
+
+    const activeScreenTrack =
+      kind === "video"
+        ? this.screenShareStream?.getVideoTracks().find((screenTrack) => screenTrack.readyState === "live")
+        : this.screenShareStream?.getAudioTracks().find((screenTrack) => screenTrack.readyState === "live");
+
+    for (const [socketId, peer] of this.peers.entries()) {
+      if (peer.connectionState === "closed") continue;
+      try {
+        const sender = peer.getSenders().find((s) => s.track?.kind === kind);
+        const outboundTrack = activeScreenTrack && kind === "video" ? activeScreenTrack : track;
+
+        if (sender) {
+          await sender.replaceTrack(outboundTrack);
+        } else if (outboundTrack) {
+          peer.addTrack(outboundTrack, activeScreenTrack ? this.screenShareStream! : this.localStream);
+        }
+        await this.sendOffer(socketId);
+      } catch (err) {
+        console.error(`[WebRTC:Mesh] ${kind} device replaceTrack failed for ${socketId}:`, err);
+      }
+    }
+
+    if (oldTrack && oldTrack !== track) {
+      oldTrack.stop();
+    }
+  }
+
   /** Replace outbound video with screen track on every peer (Google Meet style) */
   async startScreenShare(stream: MediaStream): Promise<void> {
     this.screenShareStream = stream;

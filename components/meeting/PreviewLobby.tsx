@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import type { ReactNode } from "react";
 import { ChevronDown, Image as ImageIcon, Mic, MicOff, MoreHorizontal, Video, VideoOff, Volume2 } from "lucide-react";
 
 import { getDisplayInitial } from "@/lib/display-name";
@@ -19,13 +21,99 @@ type PreviewLobbyProps = {
   onToggleMic: () => void;
   onToggleCamera: () => void;
   onJoinNow: () => void;
+  audioInputDevices: MediaDeviceInfo[];
+  audioOutputDevices: MediaDeviceInfo[];
+  videoInputDevices: MediaDeviceInfo[];
+  selectedAudioInputId: string;
+  selectedAudioOutputId: string;
+  selectedVideoInputId: string;
+  onSelectAudioInput: (deviceId: string) => void;
+  onSelectAudioOutput: (deviceId: string) => void;
+  onSelectVideoInput: (deviceId: string) => void;
   isAuthenticated: boolean;
   customDisplayName: string;
   onCustomDisplayNameChange: (name: string) => void;
 };
 
+type DeviceSelectorProps = {
+  id: "microphone" | "speaker" | "camera";
+  title: string;
+  icon: ReactNode;
+  devices: MediaDeviceInfo[];
+  selectedDeviceId: string;
+  fallbackLabel: string;
+  openMenu: string | null;
+  setOpenMenu: (menu: string | null) => void;
+  onSelectDevice: (deviceId: string) => void;
+};
+
+const deviceLabel = (device: MediaDeviceInfo, index: number, fallback: string) =>
+  device.label || `${fallback} ${index + 1}`;
+
+function DeviceSelector({
+  id,
+  title,
+  icon,
+  devices,
+  selectedDeviceId,
+  fallbackLabel,
+  openMenu,
+  setOpenMenu,
+  onSelectDevice,
+}: DeviceSelectorProps) {
+  const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId);
+  const selectedLabel = selectedDevice
+    ? deviceLabel(selectedDevice, devices.indexOf(selectedDevice), fallbackLabel)
+    : "Default";
+  const isOpen = openMenu === id;
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        title={title}
+        onClick={() => setOpenMenu(isOpen ? null : id)}
+        className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] px-4 text-sm text-[#3c4043] hover:bg-[#f8fafd]"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {icon}
+          <span className="max-w-[108px] truncate">{selectedLabel}</span>
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute left-1/2 top-10 z-50 w-64 -translate-x-1/2 rounded-xl border border-[#dadce0] bg-white p-1 text-left shadow-xl">
+          {devices.length > 0 ? (
+            devices.map((device, index) => (
+              <button
+                key={device.deviceId}
+                type="button"
+                onClick={() => {
+                  onSelectDevice(device.deviceId);
+                  setOpenMenu(null);
+                }}
+                className={[
+                  "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-[#202124] hover:bg-[#f8fafd]",
+                  device.deviceId === selectedDeviceId ? "bg-[#e8f0fe] text-[#1a73e8]" : "",
+                ].join(" ")}
+                title={deviceLabel(device, index, fallbackLabel)}
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  {deviceLabel(device, index, fallbackLabel)}
+                </span>
+              </button>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-sm text-[#5f6368]">No devices found</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PreviewLobby({
-  meetingCode,
   displayName,
   email,
   image,
@@ -37,12 +125,22 @@ export function PreviewLobby({
   onToggleMic,
   onToggleCamera,
   onJoinNow,
+  audioInputDevices,
+  audioOutputDevices,
+  videoInputDevices,
+  selectedAudioInputId,
+  selectedAudioOutputId,
+  selectedVideoInputId,
+  onSelectAudioInput,
+  onSelectAudioOutput,
+  onSelectVideoInput,
   isAuthenticated,
   customDisplayName,
   onCustomDisplayNameChange,
 }: PreviewLobbyProps) {
   const label = displayName || (isAuthenticated ? "Signed-in user" : "Guest");
   const initial = getDisplayInitial(label);
+  const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-white text-[#202124]">
@@ -169,41 +267,41 @@ export function PreviewLobby({
           </div>
 
           <div className="mt-4 flex flex-wrap justify-center gap-2">
-            <button
-              type="button"
+            <DeviceSelector
+              id="microphone"
               title="Microphone"
-              className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] px-4 text-sm text-[#3c4043] hover:bg-[#f8fafd]"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <Mic className="h-4 w-4 shrink-0" />
-                <span className="truncate">Default</span>
-              </span>
-              <ChevronDown className="h-4 w-4 shrink-0" />
-            </button>
+              icon={<Mic className="h-4 w-4 shrink-0" />}
+              devices={audioInputDevices}
+              selectedDeviceId={selectedAudioInputId}
+              fallbackLabel="Microphone"
+              openMenu={openDeviceMenu}
+              setOpenMenu={setOpenDeviceMenu}
+              onSelectDevice={onSelectAudioInput}
+            />
 
-            <button
-              type="button"
+            <DeviceSelector
+              id="speaker"
               title="Speaker"
-              className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] px-4 text-sm text-[#3c4043] hover:bg-[#f8fafd]"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <Volume2 className="h-4 w-4 shrink-0" />
-                <span className="truncate">Default</span>
-              </span>
-              <ChevronDown className="h-4 w-4 shrink-0" />
-            </button>
+              icon={<Volume2 className="h-4 w-4 shrink-0" />}
+              devices={audioOutputDevices}
+              selectedDeviceId={selectedAudioOutputId}
+              fallbackLabel="Speaker"
+              openMenu={openDeviceMenu}
+              setOpenMenu={setOpenDeviceMenu}
+              onSelectDevice={onSelectAudioOutput}
+            />
 
-            <button
-              type="button"
+            <DeviceSelector
+              id="camera"
               title="Camera"
-              className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] px-4 text-sm text-[#3c4043] hover:bg-[#f8fafd]"
-            >
-              <span className="flex min-w-0 items-center gap-2">
-                <Video className="h-4 w-4 shrink-0" />
-                <span className="truncate">Camera</span>
-              </span>
-              <ChevronDown className="h-4 w-4 shrink-0" />
-            </button>
+              icon={<Video className="h-4 w-4 shrink-0" />}
+              devices={videoInputDevices}
+              selectedDeviceId={selectedVideoInputId}
+              fallbackLabel="Camera"
+              openMenu={openDeviceMenu}
+              setOpenMenu={setOpenDeviceMenu}
+              onSelectDevice={onSelectVideoInput}
+            />
           </div>
         </section>
 
