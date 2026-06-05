@@ -630,6 +630,14 @@ export default function MeetingRoom() {
     }
 
     setScreenShareError(null);
+    const activePresenter = participants.find((p) => p.isScreenSharing);
+    if (activePresenter) {
+      const shouldReplace = window.confirm(
+        `${activePresenter.displayName} is presenting. Do you want to present instead?`
+      );
+      if (!shouldReplace) return;
+    }
+
     const support = getScreenShareSupport();
     if (!support.supported) {
       setScreenShareError(support.reason || "Screen sharing is not available.");
@@ -654,6 +662,13 @@ export default function MeetingRoom() {
       await sessionRef.current?.startScreenShare(stream);
       setIsScreenSharing(true);
       setPinnedParticipantId("local");
+      setParticipants((prev) =>
+        prev.map((p) => {
+          if (!p.isScreenSharing) return p;
+          const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
+          return { ...p, isScreenSharing: false, stream: streamCopy };
+        })
+      );
 
       clearScreenShareBindings();
       screenShareUnbindRef.current = bindScreenShareEndHandlers(stream, () => {
@@ -1007,14 +1022,27 @@ export default function MeetingRoom() {
         addReactionBubble(targetId, data.emoji, senderName, data.timestamp || Date.now());
       },
       onScreenShareStarted: (senderId) => {
-        if (senderId === socket.id) return;
+        if (senderId === socket.id) {
+          setParticipants((prev) =>
+            prev.map((p) => {
+              if (!p.isScreenSharing) return p;
+              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
+              return { ...p, isScreenSharing: false, stream: streamCopy };
+            })
+          );
+          return;
+        }
+
+        if (screenStreamRef.current) {
+          void endScreenShare();
+        }
+
         setPinnedParticipantId(senderId);
         setParticipants((prev) =>
           prev.map((p) => {
-            if (p.socketId === senderId) {
-              // Recreate the MediaStream reference so React's ParticipantVideo re-triggers the track attachment immediately
+            if (p.socketId === senderId || p.isScreenSharing) {
               const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
-              return { ...p, isScreenSharing: true, stream: streamCopy };
+              return { ...p, isScreenSharing: p.socketId === senderId, stream: streamCopy };
             }
             return p;
           })
