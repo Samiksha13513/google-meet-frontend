@@ -7,6 +7,7 @@ import { Input } from '../components/ui/input';
 import Image from 'next/image';
 import { googleLogin } from "../services/auth";
 import { hasValidAuthToken } from "@/lib/auth-token";
+import { MEET_LOGO_URL } from "@/lib/meet-brand";
 
 export default function Home() {
   const router = useRouter();
@@ -71,7 +72,7 @@ export default function Home() {
             {/* Google Meet Logo */}
             <div className="flex items-center gap-2">
               <Image
-              src="https://storage.googleapis.com/gweb-workspace-assets/uploads/7uffzv9dk4sn-3dAGxdfnn2dy6LPNvOTYRx-8be390cd801f65e46a67dec3941d7c86-Google_Meet_Logo_x2.svg"
+              src={MEET_LOGO_URL}
               alt="Google Meet Logo"
               width={172}
               height={32}

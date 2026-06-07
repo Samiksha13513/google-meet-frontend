@@ -11,6 +11,8 @@ import { hasValidAuthToken } from "@/lib/auth-token";
 export default function MeetPage() {
   const router = useRouter();
   const [activeNavItem, setActiveNavItem] = useState("meetings");
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -41,19 +43,50 @@ export default function MeetPage() {
 
   const handleNavItemClick = (id: string) => {
     setActiveNavItem(id);
+    setIsMobileSidebarOpen(false);
     router.push(id === "calls" ? "/dashboard?tab=calls" : "/dashboard");
   };
 
   return (
     <div className="flex h-screen flex-col bg-white">
       {/* Header */}
-      <Header />
+      <Header
+        isSidebarOpen={isSidebarOpen || isMobileSidebarOpen}
+        onMenuClick={() => {
+          if (window.matchMedia("(max-width: 767px)").matches) {
+            setIsMobileSidebarOpen((open) => !open);
+            return;
+          }
+
+          setIsSidebarOpen((open) => !open);
+        }}
+      />
 
       {/* Main layout */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar - hidden on mobile */}
         <div className="hidden md:block">
-          <Sidebar activeItem={activeNavItem} onItemClick={handleNavItemClick} />
+          <Sidebar
+            activeItem={activeNavItem}
+            isOpen={isSidebarOpen}
+            onItemClick={handleNavItemClick}
+          />
+        </div>
+
+        <div className="md:hidden">
+          {isMobileSidebarOpen && (
+            <button
+              type="button"
+              aria-label="Close main menu"
+              onClick={() => setIsMobileSidebarOpen(false)}
+              className="fixed inset-x-0 bottom-0 top-16 z-30 bg-black/20 transition-opacity"
+            />
+          )}
+          <Sidebar
+            activeItem={activeNavItem}
+            isOpen={isMobileSidebarOpen}
+            isMobile
+            onItemClick={handleNavItemClick}
+          />
         </div>
 
         {/* Main content */}

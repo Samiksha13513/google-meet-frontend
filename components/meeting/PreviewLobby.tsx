@@ -6,7 +6,9 @@ import { ChevronDown, Image as ImageIcon, Mic, MicOff, MoreHorizontal, Video, Vi
 
 import { getDisplayInitial } from "@/lib/display-name";
 import { Button } from "@/components/ui/button";
+import { MEET_LOGO_URL } from "@/lib/meet-brand";
 import { googleLogin } from "@/services/auth";
+import Image from "next/image";
 
 type PreviewLobbyProps = {
   meetingCode: string;
@@ -146,12 +148,14 @@ export function PreviewLobby({
     <div className="fixed inset-0 flex flex-col bg-white text-[#202124]">
       <header className="flex h-16 items-center justify-between px-3 sm:px-6">
         <div className="flex items-center gap-2">
-          <div className="relative h-6 w-8">
-            <div className="absolute left-0 top-1 h-5 w-6 rounded bg-[#fbbc04]" />
-            <div className="absolute right-0 top-2 h-3 w-3 rounded-sm bg-[#fbbc04]" />
-            <div className="absolute left-1.5 top-3 h-1.5 w-1.5 rounded-full bg-white/80" />
-          </div>
-          <span className="text-[28px] font-medium text-[#2b2c30]">Meet</span>
+          <Image
+            src={MEET_LOGO_URL}
+            alt="Google Meet"
+            width={124}
+            height={32}
+            className="h-8 w-[124px] object-contain"
+            priority
+          />
         </div>
 
         {isAuthenticated && (
