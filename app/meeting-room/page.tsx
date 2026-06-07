@@ -1693,24 +1693,28 @@ export default function MeetingRoom() {
   // Participant status text (Google Meet-like)
   const formatParticipantNames = (items: Participant[]) => {
     const names = items.map((p) => p.displayName || "Participant");
-    if (names.length === 1) return `${names[0]} in call`;
-    if (names.length === 2) return `${names[0]} and ${names[1]} in call`;
-    if (names.length === 3) return `${names[0]}, ${names[1]}, and ${names[2]} in call`;
+    if (names.length === 1) return `${names[0]} is in the call`;
+    if (names.length === 2) return `${names[0]} and ${names[1]} are in the call`;
+    if (names.length === 3) return `${names[0]}, ${names[1]}, and ${names[2]} are in the call`;
     return "";
   };
 
   const renderParticipantStatus = () => {
-    if (participants.length === 0) {
+    // Exclude local user from the "others" list so we never show the host as "in call" when alone
+    const others = participants.filter((p) => p.socketId !== socket.id);
+
+    if (others.length === 0) {
       return "No one else is here";
     }
 
-    // For small numbers, show participant names like Google Meet; otherwise show count.
-    if (participants.length <= 3) {
-      const namesText = formatParticipantNames(participants);
+    // For small numbers, show participant names like Google Meet; otherwise show total count (including you)
+    if (others.length <= 3) {
+      const namesText = formatParticipantNames(others);
       if (namesText) return namesText;
     }
 
-    return `${totalConferencingUsers} people in call`;
+    const totalIncludingYou = others.length + 1;
+    return `${totalIncludingYou} people in call`;
   };
 
   return (
