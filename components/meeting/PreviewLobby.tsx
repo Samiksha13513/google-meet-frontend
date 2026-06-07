@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { MEET_LOGO_URL } from "@/lib/meet-brand";
 import { googleLogin } from "@/services/auth";
 import Image from "next/image";
+import { useMeetingStore } from "@/store/meeting-store";
+import { socket } from "@/lib/socket";
 
 type PreviewLobbyProps = {
   meetingCode: string;
@@ -143,6 +145,24 @@ export function PreviewLobby({
   const label = displayName || (isAuthenticated ? "Signed-in user" : "Guest");
   const initial = getDisplayInitial(label);
   const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
+  const participants = useMeetingStore((s) => s.participants || []);
+
+  const others = participants.filter((p) => p.id !== socket.id);
+
+  const formatNames = (items: typeof participants) => {
+    const names = items.map((p) => p.displayName).filter(Boolean) as string[];
+    if (names.length === 1) return `${names[0]} is in this call`;
+    if (names.length === 2) return `${names[0]} and ${names[1]} are in this call`;
+    if (names.length === 3) return `${names[0]}, ${names[1]}, and ${names[2]} are in this call`;
+    return "";
+  };
+
+  const participantStatusText = () => {
+    if (others.length === 0) return "No one else is here";
+    const namesText = formatNames(others);
+    if (namesText) return namesText;
+    return `${others.length + 1} people in call`;
+  };
 
   return (
     <div className="fixed inset-0 flex flex-col bg-white text-[#202124]">
@@ -316,7 +336,7 @@ export function PreviewLobby({
             {initial}
           </div>
           <p className="mt-3 max-w-[280px] truncate text-sm font-medium text-[#202124]">
-            {label} is in this call
+            {participantStatusText()}
           </p>
 
           {!isAuthenticated && (
