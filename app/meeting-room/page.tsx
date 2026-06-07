@@ -26,7 +26,7 @@ import {
 
 import { useParams, useRouter } from "next/navigation";
 import { socket } from "@/lib/socket";
-import { getLocalStream } from "../../webrtc/media";
+import { getLocalStream, getReplacementTrack } from "../../webrtc/media";
 import { MeetingPeerSession } from "../../webrtc/meeting-session";
 import {
   bindScreenShareEndHandlers,
@@ -45,6 +45,7 @@ import {
 import { getMeetingByCode } from "@/lib/api";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮", "👎"];
+const DEVICE_PREFERENCES_KEY = "meet-device-preferences";
 
 type MeetingState =
   | "lobby"
@@ -54,7 +55,7 @@ type MeetingState =
   | "ended"
   | "denied";
 
-type MeetingLayout = "auto" | "tiled" | "grid" | "spotlight" | "sidebar";
+type MeetingLayout = "auto" | "tiled" | "spotlight" | "sidebar";
 
 type Participant = {
   socketId: string;
@@ -101,16 +102,65 @@ type JoinRequest = {
   image?: string;
 };
 
+type DevicePreferences = {
+  audioInputId: string;
+  audioOutputId: string;
+  videoInputId: string;
+};
+
+type SinkIdVideoElement = HTMLVideoElement & {
+  setSinkId?: (sinkId: string) => Promise<void>;
+};
+
+const getStoredDevicePreferences = (): DevicePreferences => {
+  if (typeof window === "undefined") {
+    return { audioInputId: "", audioOutputId: "", videoInputId: "" };
+  }
+
+  try {
+    const raw = localStorage.getItem(DEVICE_PREFERENCES_KEY);
+    if (!raw) return { audioInputId: "", audioOutputId: "", videoInputId: "" };
+    const parsed = JSON.parse(raw) as Partial<DevicePreferences>;
+    return {
+      audioInputId: parsed.audioInputId || "",
+      audioOutputId: parsed.audioOutputId || "",
+      videoInputId: parsed.videoInputId || "",
+    };
+  } catch {
+    return { audioInputId: "", audioOutputId: "", videoInputId: "" };
+  }
+};
+
+const storeDevicePreference = (
+  key: keyof DevicePreferences,
+  deviceId: string
+) => {
+  if (typeof window === "undefined") return;
+  const current = getStoredDevicePreferences();
+  localStorage.setItem(
+    DEVICE_PREFERENCES_KEY,
+    JSON.stringify({ ...current, [key]: deviceId })
+  );
+};
+
+const getMediaDeviceLabel = (
+  device: MediaDeviceInfo,
+  index: number,
+  fallback: string
+) => device.label || `${fallback} ${index + 1}`;
+
 // Isolated Video element component to ensure stable stream attachments and avoid React playback resets
 const ParticipantVideo = ({
   stream,
   isLocal,
   muted,
+  sinkDeviceId,
   fit = "cover",
 }: {
   stream?: MediaStream;
   isLocal: boolean;
   muted: boolean;
+  sinkDeviceId?: string;
   fit?: "cover" | "contain";
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -140,6 +190,13 @@ const ParticipantVideo = ({
       // Avoid duplicate srcObject assignments to prevent annoying video flashes/pauses
       if (video.srcObject !== stream) {
         video.srcObject = stream;
+      }
+
+      const sinkVideo = video as SinkIdVideoElement;
+      if (!isLocal && sinkDeviceId !== undefined && sinkVideo.setSinkId) {
+        sinkVideo.setSinkId(sinkDeviceId).catch((err) => {
+          console.warn("[WebRTC:Audio] Speaker device switch failed:", err);
+        });
       }
       
       video.play().catch((err) => {
@@ -172,7 +229,7 @@ const ParticipantVideo = ({
       });
       detachVideoElement(video);
     };
-  }, [stream, isLocal]);
+  }, [stream, isLocal, sinkDeviceId]);
 
   if (streamUnavailable || !stream) {
     return (
@@ -246,12 +303,10 @@ export default function MeetingRoom() {
   const displayName = getIdentityLabel(identity);
   const displaySecondary = getIdentitySecondary(identity);
 
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticated] = useState(
+    () => typeof window !== "undefined" && !!localStorage.getItem("authToken")
+  );
   const [customDisplayName, setCustomDisplayName] = useState("Guest");
-
-  useEffect(() => {
-    setIsAuthenticated(!!localStorage.getItem("authToken"));
-  }, []);
 
   const resolvedDisplayName = isAuthenticated ? displayName : (customDisplayName || "Guest");
 
@@ -264,6 +319,19 @@ export default function MeetingRoom() {
   const [meetingError, setMeetingError] = useState<string | null>(null);
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [screenShareError, setScreenShareError] = useState<string | null>(null);
+  const [audioInputDevices, setAudioInputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [videoInputDevices, setVideoInputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioInputId, setSelectedAudioInputId] = useState(
+    () => getStoredDevicePreferences().audioInputId
+  );
+  const [selectedAudioOutputId, setSelectedAudioOutputId] = useState(
+    () => getStoredDevicePreferences().audioOutputId
+  );
+  const [selectedVideoInputId, setSelectedVideoInputId] = useState(
+    () => getStoredDevicePreferences().videoInputId
+  );
+  const [isJoining, setIsJoining] = useState(false);
   const [, setPermissionRequested] = useState(false);
   const [deniedReason, setDeniedReason] = useState("Host denied your request");
 
@@ -282,10 +350,13 @@ export default function MeetingRoom() {
   const [chatInput, setChatInput] = useState("");
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [showParticipantsList, setShowParticipantsList] = useState(false);
+  const [showAdmitGuestsDialog, setShowAdmitGuestsDialog] = useState(false);
   const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [meetingLayout, setMeetingLayout] = useState<MeetingLayout>("auto");
   const [showLayoutMenu, setShowLayoutMenu] = useState(false);
+  const [showAudioDeviceMenu, setShowAudioDeviceMenu] = useState(false);
+  const [showVideoDeviceMenu, setShowVideoDeviceMenu] = useState(false);
 
   // Reaction picker & anims
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -299,6 +370,9 @@ export default function MeetingRoom() {
   const [screenStreamForRender, setScreenStreamForRender] = useState<MediaStream | null>(null);
   const sessionRef = useRef<MeetingPeerSession | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const selectedAudioInputIdRef = useRef("");
+  const selectedAudioOutputIdRef = useRef("");
+  const selectedVideoInputIdRef = useRef("");
   const reactionIdRef = useRef(0);
   const lastLocalReactionRef = useRef<{ emoji: string; pendingEcho: boolean } | null>(null);
   const audioLevelsRef = useRef<Record<string, number>>({});
@@ -306,10 +380,24 @@ export default function MeetingRoom() {
 
   const emojiRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
+  const audioDeviceMenuRef = useRef<HTMLDivElement>(null);
+  const videoDeviceMenuRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const showChatRef = useRef(false);
   const screenShareUnbindRef = useRef<(() => void) | null>(null);
   const screenShareSupport = typeof window !== "undefined" ? getScreenShareSupport() : null;
+
+  useEffect(() => {
+    selectedAudioInputIdRef.current = selectedAudioInputId;
+  }, [selectedAudioInputId]);
+
+  useEffect(() => {
+    selectedAudioOutputIdRef.current = selectedAudioOutputId;
+  }, [selectedAudioOutputId]);
+
+  useEffect(() => {
+    selectedVideoInputIdRef.current = selectedVideoInputId;
+  }, [selectedVideoInputId]);
 
   // =========================
   // CLEANUPS
@@ -349,8 +437,11 @@ export default function MeetingRoom() {
     setShowChat(false);
     setUnreadMessages(0);
     setShowParticipantsList(false);
+    setShowAdmitGuestsDialog(false);
     setShowEmojiPicker(false);
     setShowLayoutMenu(false);
+    setShowAudioDeviceMenu(false);
+    setShowVideoDeviceMenu(false);
     setMeetingLayout("auto");
     setFloatingReactions([]);
     setReactionBubbles({});
@@ -408,6 +499,121 @@ export default function MeetingRoom() {
   // HANDLERS
   // =========================
 
+  const refreshMediaDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const audioInputs = devices.filter((device) => device.kind === "audioinput");
+      const audioOutputs = devices.filter((device) => device.kind === "audiooutput");
+      const videoInputs = devices.filter((device) => device.kind === "videoinput");
+      const storedPreferences = getStoredDevicePreferences();
+
+      setAudioInputDevices(audioInputs);
+      setAudioOutputDevices(audioOutputs);
+      setVideoInputDevices(videoInputs);
+
+      const currentAudioDeviceId =
+        localStreamRef.current?.getAudioTracks()[0]?.getSettings().deviceId || "";
+      const currentVideoDeviceId =
+        localStreamRef.current?.getVideoTracks()[0]?.getSettings().deviceId || "";
+
+      const nextAudioInputId =
+        currentAudioDeviceId ||
+        (audioInputs.some((device) => device.deviceId === selectedAudioInputIdRef.current)
+          ? selectedAudioInputIdRef.current
+          : audioInputs.some((device) => device.deviceId === storedPreferences.audioInputId)
+            ? storedPreferences.audioInputId
+            : audioInputs[0]?.deviceId || "");
+      const nextVideoInputId =
+        currentVideoDeviceId ||
+        (videoInputs.some((device) => device.deviceId === selectedVideoInputIdRef.current)
+          ? selectedVideoInputIdRef.current
+          : videoInputs.some((device) => device.deviceId === storedPreferences.videoInputId)
+            ? storedPreferences.videoInputId
+            : videoInputs[0]?.deviceId || "");
+      const nextAudioOutputId = audioOutputs.some((device) => device.deviceId === selectedAudioOutputIdRef.current)
+        ? selectedAudioOutputIdRef.current
+        : audioOutputs.some((device) => device.deviceId === storedPreferences.audioOutputId)
+          ? storedPreferences.audioOutputId
+          : audioOutputs[0]?.deviceId || "";
+
+      setSelectedAudioInputId(nextAudioInputId);
+      setSelectedVideoInputId(nextVideoInputId);
+      setSelectedAudioOutputId(nextAudioOutputId);
+    } catch (error) {
+      console.warn("[MediaDevices] Unable to enumerate devices:", error);
+    }
+  };
+
+  const replaceLocalMediaTrack = async (
+    kind: "audio" | "video",
+    track: MediaStreamTrack | null
+  ) => {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+
+    const oldTrack =
+      kind === "audio" ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+
+    if (sessionRef.current?.isActive()) {
+      await sessionRef.current.replaceLocalTrack(kind, track);
+    } else {
+      if (oldTrack && oldTrack !== track) {
+        stream.removeTrack(oldTrack);
+      }
+      if (track && !stream.getTracks().some((streamTrack) => streamTrack.id === track.id)) {
+        stream.addTrack(track);
+      }
+      if (oldTrack && oldTrack !== track) {
+        oldTrack.stop();
+      }
+    }
+
+    if (kind === "video") {
+      sessionRef.current?.setLocalCameraVideoTrack(track);
+    } else {
+      sessionRef.current?.setLocalMicAudioTrack(track);
+    }
+
+    setLocalStreamForRender(new MediaStream(stream.getTracks()));
+  };
+
+  const handleSelectAudioInput = async (deviceId: string) => {
+    try {
+      const track = await getReplacementTrack("audioinput", deviceId || undefined);
+      track.enabled = isMicOn;
+      await replaceLocalMediaTrack("audio", track);
+      setSelectedAudioInputId(deviceId);
+      storeDevicePreference("audioInputId", deviceId);
+      setMediaError(null);
+      await refreshMediaDevices();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to switch microphone.";
+      setMediaError(message);
+    }
+  };
+
+  const handleSelectVideoInput = async (deviceId: string) => {
+    try {
+      const track = await getReplacementTrack("videoinput", deviceId || undefined);
+      track.enabled = isCameraOn;
+      await replaceLocalMediaTrack("video", track);
+      setSelectedVideoInputId(deviceId);
+      storeDevicePreference("videoInputId", deviceId);
+      setMediaError(null);
+      await refreshMediaDevices();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to switch camera.";
+      setMediaError(message);
+    }
+  };
+
+  const handleSelectAudioOutput = (deviceId: string) => {
+    setSelectedAudioOutputId(deviceId);
+    storeDevicePreference("audioOutputId", deviceId);
+  };
+
   const handleToggleMic = () => {
     const next = !isMicOn;
     const stream = localStreamRef.current;
@@ -436,7 +642,6 @@ export default function MeetingRoom() {
     screenStreamRef.current = null;
     setScreenStreamForRender(null);
     setIsScreenSharing(false);
-    setPinnedParticipantId((prev) => (prev === "local" ? null : prev));
   };
 
   const handleToggleScreenShare = async () => {
@@ -446,6 +651,14 @@ export default function MeetingRoom() {
     }
 
     setScreenShareError(null);
+    const activePresenter = participants.find((p) => p.isScreenSharing);
+    if (activePresenter) {
+      const shouldReplace = window.confirm(
+        `${activePresenter.displayName} is presenting. Do you want to present instead?`
+      );
+      if (!shouldReplace) return;
+    }
+
     const support = getScreenShareSupport();
     if (!support.supported) {
       setScreenShareError(support.reason || "Screen sharing is not available.");
@@ -469,7 +682,13 @@ export default function MeetingRoom() {
       setScreenStreamForRender(stream);
       await sessionRef.current?.startScreenShare(stream);
       setIsScreenSharing(true);
-      setPinnedParticipantId("local");
+      setParticipants((prev) =>
+        prev.map((p) => {
+          if (!p.isScreenSharing) return p;
+          const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
+          return { ...p, isScreenSharing: false, stream: streamCopy };
+        })
+      );
 
       clearScreenShareBindings();
       screenShareUnbindRef.current = bindScreenShareEndHandlers(stream, () => {
@@ -550,9 +769,6 @@ export default function MeetingRoom() {
   const handleLayoutChange = (layout: MeetingLayout) => {
     setMeetingLayout(layout);
     setShowLayoutMenu(false);
-    if (layout === "grid" || layout === "tiled") {
-      setPinnedParticipantId(null);
-    }
   };
 
   const handleToggleParticipantPin = (participantId: string) => {
@@ -574,6 +790,25 @@ export default function MeetingRoom() {
   const handleDeny = (socketId: string) => {
     sessionRef.current?.denyJoin(socketId);
     setJoinRequests((prev) => prev.filter((r) => r.socketId !== socketId));
+  };
+
+  const handleOpenAdmitGuestsDialog = () => {
+    setShowAdmitGuestsDialog(true);
+    setShowParticipantsList(false);
+  };
+
+  const handleAdmitGuestFromDialog = (socketId: string) => {
+    handleAdmit(socketId);
+    if (joinRequests.length <= 1) {
+      setShowAdmitGuestsDialog(false);
+    }
+  };
+
+  const handleDenyGuestFromDialog = (socketId: string) => {
+    handleDeny(socketId);
+    if (joinRequests.length <= 1) {
+      setShowAdmitGuestsDialog(false);
+    }
   };
 
   const handleKick = (socketId: string) => {
@@ -603,22 +838,29 @@ export default function MeetingRoom() {
 
   const handleJoinNow = async () => {
     if (!meetingCode) return;
+    if (isJoining) return; // prevent duplicate clicks
+    if (sessionRef.current?.isActive()) return;
 
-    setMeetingState("waiting");
+    setIsJoining(true);
 
     if (!socket.connected) {
       socket.connect();
     }
 
     const stream = localStreamRef.current;
-    if (!stream) return;
+    if (!stream) {
+      setIsJoining(false);
+      return;
+    }
 
     // Create session
     const session = new MeetingPeerSession(meetingCode, socket, stream, {
       onWaitingRoom: () => {
+        setIsJoining(false);
         setMeetingState("waiting");
       },
       onJoinApproved: (members, isHostRole) => {
+        setIsJoining(false);
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
 
@@ -644,6 +886,7 @@ export default function MeetingRoom() {
         setUnreadMessages(0);
       },
       onJoinDenied: (reason) => {
+        setIsJoining(false);
         setDeniedReason(reason);
         setMeetingState("denied");
       },
@@ -795,14 +1038,26 @@ export default function MeetingRoom() {
         addReactionBubble(targetId, data.emoji, senderName, data.timestamp || Date.now());
       },
       onScreenShareStarted: (senderId) => {
-        if (senderId === socket.id) return;
-        setPinnedParticipantId(senderId);
+        if (senderId === socket.id) {
+          setParticipants((prev) =>
+            prev.map((p) => {
+              if (!p.isScreenSharing) return p;
+              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
+              return { ...p, isScreenSharing: false, stream: streamCopy };
+            })
+          );
+          return;
+        }
+
+        if (screenStreamRef.current) {
+          void endScreenShare();
+        }
+
         setParticipants((prev) =>
           prev.map((p) => {
-            if (p.socketId === senderId) {
-              // Recreate the MediaStream reference so React's ParticipantVideo re-triggers the track attachment immediately
+            if (p.socketId === senderId || p.isScreenSharing) {
               const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
-              return { ...p, isScreenSharing: true, stream: streamCopy };
+              return { ...p, isScreenSharing: p.socketId === senderId, stream: streamCopy };
             }
             return p;
           })
@@ -810,7 +1065,6 @@ export default function MeetingRoom() {
       },
       onScreenShareStopped: (senderId) => {
         if (senderId === socket.id) return;
-        setPinnedParticipantId((prev) => (prev === senderId ? null : prev));
         setParticipants((prev) =>
           prev.map((p) => {
             if (p.socketId === senderId) {
@@ -839,7 +1093,8 @@ export default function MeetingRoom() {
     const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
 
     sessionRef.current = session;
-    await session.start({
+    try {
+      await session.start({
       displayName: isAuthenticated ? displayName : customDisplayName,
       email: isAuthenticated ? identity.email : undefined,
       image: isAuthenticated ? identity.image : undefined,
@@ -847,21 +1102,39 @@ export default function MeetingRoom() {
       isMicOn,
       isCameraOn,
     });
+  } catch (error) {
+      setIsJoining(false);
+      setMeetingError(error instanceof Error ? error.message : "Unable to join meeting.");
+    }
   };
 
   // Camera & Mic setup
   const startPreviewMedia = async () => {
     setPermissionRequested(true);
     try {
-      const stream = await getLocalStream();
+      const storedPreferences = getStoredDevicePreferences();
+      let stream: MediaStream;
+      try {
+        stream = await getLocalStream({
+          audioInputId: storedPreferences.audioInputId || selectedAudioInputId,
+          videoInputId: storedPreferences.videoInputId || selectedVideoInputId,
+        });
+      } catch (error) {
+        if (!storedPreferences.audioInputId && !storedPreferences.videoInputId) {
+          throw error;
+        }
+        stream = await getLocalStream();
+      }
       stream.getAudioTracks().forEach((t) => (t.enabled = isMicOn));
       stream.getVideoTracks().forEach((t) => (t.enabled = isCameraOn));
       localStreamRef.current = stream;
       setLocalStreamForRender(stream);
       setMediaError(null);
+      await refreshMediaDevices();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       setMediaError(`Camera/microphone permission failed: ${errorMessage}`);
+      await refreshMediaDevices();
     }
   };
 
@@ -875,6 +1148,61 @@ export default function MeetingRoom() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingCode]);
+
+  useEffect(() => {
+    if (!navigator.mediaDevices?.addEventListener) return;
+
+    const handleDeviceChange = async () => {
+      await refreshMediaDevices();
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter((device) => device.kind === "audioinput");
+        const audioOutputs = devices.filter((device) => device.kind === "audiooutput");
+        const videoInputs = devices.filter((device) => device.kind === "videoinput");
+        const activeAudioTrack = localStreamRef.current?.getAudioTracks()[0];
+        const activeVideoTrack = localStreamRef.current?.getVideoTracks()[0];
+
+        if (
+          audioInputs.length > 0 &&
+          (activeAudioTrack?.readyState === "ended" ||
+            (selectedAudioInputIdRef.current &&
+              !audioInputs.some((device) => device.deviceId === selectedAudioInputIdRef.current)))
+        ) {
+          await handleSelectAudioInput(audioInputs[0].deviceId);
+        }
+
+        if (
+          videoInputs.length > 0 &&
+          (activeVideoTrack?.readyState === "ended" ||
+            (selectedVideoInputIdRef.current &&
+              !videoInputs.some((device) => device.deviceId === selectedVideoInputIdRef.current)))
+        ) {
+          await handleSelectVideoInput(videoInputs[0].deviceId);
+        }
+
+        if (
+          selectedAudioOutputIdRef.current &&
+          !audioOutputs.some((device) => device.deviceId === selectedAudioOutputIdRef.current)
+        ) {
+          handleSelectAudioOutput(audioOutputs[0]?.deviceId || "");
+        }
+      } catch (error) {
+        console.warn("[MediaDevices] Device change handling failed:", error);
+      }
+    };
+
+    queueMicrotask(() => {
+      void refreshMediaDevices();
+    });
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => {
+      navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // preview presence removed; keep original waiting-room flow
 
   // Validate Code
   useEffect(() => {
@@ -916,6 +1244,12 @@ export default function MeetingRoom() {
       if (layoutRef.current && !layoutRef.current.contains(event.target as Node)) {
         setShowLayoutMenu(false);
       }
+      if (audioDeviceMenuRef.current && !audioDeviceMenuRef.current.contains(event.target as Node)) {
+        setShowAudioDeviceMenu(false);
+      }
+      if (videoDeviceMenuRef.current && !videoDeviceMenuRef.current.contains(event.target as Node)) {
+        setShowVideoDeviceMenu(false);
+      }
     };
     document.addEventListener("mousedown", clickOut);
     return () => document.removeEventListener("mousedown", clickOut);
@@ -950,9 +1284,17 @@ export default function MeetingRoom() {
   useEffect(() => {
     const stream = localStreamRef.current;
     if (stream && localVideoRef.current) {
-      localVideoRef.current.srcObject = stream;
+      const video = localVideoRef.current;
+      // Avoid duplicate srcObject assignments to prevent flashes
+      if (video.srcObject !== stream) {
+        video.srcObject = stream;
+      }
+      // Ensure playback starts (some browsers need explicit play() calls)
+      video.play().catch((err) => {
+        console.log('[WebRTC:Video] Local autoplay failed:', err);
+      });
     }
-  }, [meetingState, isCameraOn, isScreenSharing, meetingLayout, pinnedParticipantId]);
+  }, [localStreamForRender, meetingState, isCameraOn, isScreenSharing, meetingLayout, pinnedParticipantId]);
 
   // Refresh screen share + peers after tab focus / network recovery (long meetings).
   useEffect(() => {
@@ -1070,14 +1412,23 @@ export default function MeetingRoom() {
         videoRef={localVideoRef}
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
-        isJoining={false}
         mediaError={mediaError}
         onToggleMic={handleToggleMic}
         onToggleCamera={handleToggleCamera}
+        audioInputDevices={audioInputDevices}
+        audioOutputDevices={audioOutputDevices}
+        videoInputDevices={videoInputDevices}
+        selectedAudioInputId={selectedAudioInputId}
+        selectedAudioOutputId={selectedAudioOutputId}
+        selectedVideoInputId={selectedVideoInputId}
+        onSelectAudioInput={(deviceId) => void handleSelectAudioInput(deviceId)}
+        onSelectAudioOutput={handleSelectAudioOutput}
+        onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
         onJoinNow={handleJoinNow}
         isAuthenticated={isAuthenticated}
         customDisplayName={customDisplayName}
         onCustomDisplayNameChange={setCustomDisplayName}
+        isJoining={isJoining}
       />
     );
   }
@@ -1160,32 +1511,10 @@ export default function MeetingRoom() {
   }> = [
       { id: "auto", label: "Auto", icon: LayoutGrid },
       { id: "tiled", label: "Tiled", icon: Rows3 },
-      { id: "grid", label: "Grid", icon: LayoutGrid },
       { id: "spotlight", label: "Spotlight", icon: Pin },
       { id: "sidebar", label: "Sidebar", icon: PanelRight },
     ];
   const activeLayout = layoutOptions.find((option) => option.id === meetingLayout) || layoutOptions[0];
-  const orderedParticipants = [...participants].sort((a, b) => {
-    if (a.socketId === pinnedParticipantId) return -1;
-    if (b.socketId === pinnedParticipantId) return 1;
-    if (a.isScreenSharing && !b.isScreenSharing) return -1;
-    if (!a.isScreenSharing && b.isScreenSharing) return 1;
-    return 0;
-  });
-
-  // For 2 participants, Google Meet uses a stable 2-up split on desktop (no auto-fit),
-  // and stacks on small screens. For 3+ we use auto-fit/minmax.
-  const minTilePx =
-    meetingLayout === "grid"
-      ? totalConferencingUsers <= 4 ? 320 : 220
-      : totalConferencingUsers <= 4 ? 420 : totalConferencingUsers <= 6 ? 340 : 280;
-
-  const gridStyle: React.CSSProperties | undefined = isTwoUp
-    ? undefined
-    : {
-      gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
-    };
-
   const hasVisibleVideo = (
     stream: MediaStream | undefined,
     cameraOn: boolean,
@@ -1196,14 +1525,49 @@ export default function MeetingRoom() {
   const presenterId: string | null = isScreenSharing
     ? "local"
     : sharingParticipant?.socketId ?? null;
-  const layoutWantsStage = meetingLayout === "spotlight" || meetingLayout === "sidebar";
+  const effectiveLayout: MeetingLayout =
+    meetingLayout === "auto"
+      ? pinnedParticipantId || presenterId
+        ? "spotlight"
+        : totalConferencingUsers >= 7
+          ? "sidebar"
+          : activeSpeakerId && totalConferencingUsers > 2
+            ? "sidebar"
+            : "tiled"
+      : meetingLayout;
+  const layoutWantsStage =
+    effectiveLayout === "spotlight" || effectiveLayout === "sidebar";
   const defaultStageParticipantId =
     activeSpeakerId || participants[0]?.socketId || "local";
   const stageParticipantId =
     pinnedParticipantId || presenterId || (layoutWantsStage ? defaultStageParticipantId : null);
   const useStageLayout =
-    Boolean(stageParticipantId) &&
-    (meetingLayout === "auto" || meetingLayout === "spotlight" || meetingLayout === "sidebar");
+    Boolean(stageParticipantId) && layoutWantsStage;
+  const orderedParticipants = [...participants].sort((a, b) => {
+    if (a.socketId === pinnedParticipantId) return -1;
+    if (b.socketId === pinnedParticipantId) return 1;
+    if (a.socketId === presenterId) return -1;
+    if (b.socketId === presenterId) return 1;
+    if (a.socketId === activeSpeakerId) return -1;
+    if (b.socketId === activeSpeakerId) return 1;
+    return 0;
+  });
+  const visibleGridCount = totalConferencingUsers;
+  const minTilePx =
+    visibleGridCount <= 1
+      ? 620
+      : visibleGridCount === 2
+        ? 420
+        : visibleGridCount <= 4
+          ? 300
+          : visibleGridCount <= 9
+            ? 220
+            : 170;
+  const gridStyle: React.CSSProperties | undefined = isTwoUp
+    ? undefined
+    : {
+      gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
+    };
   const presenterParticipant =
     stageParticipantId === "local" ? null : participants.find((p) => p.socketId === stageParticipantId);
   const presenterStream =
@@ -1226,6 +1590,7 @@ export default function MeetingRoom() {
       );
   const filmstripParticipants = orderedParticipants.filter((p) => p.socketId !== stageParticipantId);
   const showLocalInFilmstrip = stageParticipantId !== "local";
+  const stageLayoutIsSpotlight = effectiveLayout === "spotlight";
 
   const renderReactionBubbles = (targetId: string, compact = false) => {
     const bubbles = reactionBubbles[targetId];
@@ -1284,13 +1649,52 @@ export default function MeetingRoom() {
       </div>
     </>
   );
+  const renderDeviceList = (
+    title: string,
+    devices: MediaDeviceInfo[],
+    selectedDeviceId: string,
+    fallbackLabel: string,
+    onSelectDevice: (deviceId: string) => void | Promise<void>
+  ) => (
+    <div>
+      <div className="px-3 pb-1 pt-2 text-[11px] font-medium uppercase tracking-wide text-white/45">
+        {title}
+      </div>
+      {devices.length > 0 ? (
+        devices.map((device, index) => (
+          <button
+            key={device.deviceId}
+            type="button"
+            onClick={() => {
+              void onSelectDevice(device.deviceId);
+              setShowAudioDeviceMenu(false);
+              setShowVideoDeviceMenu(false);
+            }}
+            className={[
+              "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+              device.deviceId === selectedDeviceId
+                ? "bg-[#8ab4f8] text-[#202124]"
+                : "text-white/85 hover:bg-white/10",
+            ].join(" ")}
+            title={getMediaDeviceLabel(device, index, fallbackLabel)}
+          >
+            <span className="min-w-0 flex-1 truncate">
+              {getMediaDeviceLabel(device, index, fallbackLabel)}
+            </span>
+          </button>
+        ))
+      ) : (
+        <div className="px-3 py-2 text-sm text-white/45">No devices found</div>
+      )}
+    </div>
+  );
   const ActiveLayoutIcon = activeLayout.icon;
 
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
       {/* Floating Join Request Modal (Host only) */}
       {isHost && joinRequests.length > 0 && (
-        <div className="absolute right-4 top-4 z-50 w-[min(360px,calc(100vw-32px))] rounded-2xl border border-white/10 bg-[#2d2e30] p-4 shadow-2xl animate-fade-in">
+        <div className="absolute right-4 top-4 z-50 w-[min(372px,calc(100vw-32px))] rounded-[28px] border border-white/10 bg-[#2d2e30] p-4 shadow-2xl animate-fade-in">
           <div className="flex items-start gap-3">
             <MeetAvatar
               name={joinRequests[0].displayName}
@@ -1299,7 +1703,9 @@ export default function MeetingRoom() {
               size="md"
             />
             <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-medium text-white/90">Someone wants to join</h3>
+              <h3 className="text-sm font-medium text-white/90">
+                {joinRequests.length === 1 ? "Someone wants to join" : `${joinRequests.length} people want to join`}
+              </h3>
               <p className="mt-1 truncate text-sm text-white">{joinRequests[0].displayName}</p>
               {joinRequests[0].email && (
                 <p className="truncate text-xs text-white/55">{joinRequests[0].email}</p>
@@ -1314,12 +1720,86 @@ export default function MeetingRoom() {
               Deny
             </button>
             <button
-              onClick={() => handleAdmit(joinRequests[0].socketId)}
+              onClick={handleOpenAdmitGuestsDialog}
               className="rounded-full bg-[#8ab4f8] px-5 py-2 text-sm font-medium text-[#202124] hover:bg-[#a8c7fa] transition-colors"
             >
-              Admit
+              Admit guest
             </button>
           </div>
+        </div>
+      )}
+
+      {isHost && showAdmitGuestsDialog && joinRequests.length > 0 && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px] animate-fade-in">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="admit-guests-title"
+            className="w-full max-w-[448px] overflow-hidden rounded-[28px] bg-[#f8fafd] text-[#202124] shadow-[0_16px_48px_rgba(0,0,0,0.32)]"
+          >
+            <div className="flex items-center justify-between px-6 pb-2 pt-5">
+              <div className="min-w-0">
+                <h2 id="admit-guests-title" className="text-[22px] font-normal leading-7 tracking-normal">
+                  Admit guests?
+                </h2>
+                <p className="mt-1 text-sm leading-5 text-[#5f6368]">
+                  {joinRequests.length === 1
+                    ? "Someone wants to join this meeting"
+                    : `${joinRequests.length} people want to join this meeting`}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAdmitGuestsDialog(false)}
+                className="ml-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#5f6368] transition-colors hover:bg-[#e8eaed]"
+                aria-label="Close admit guests"
+                title="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[min(52vh,360px)] overflow-y-auto px-2 pb-2">
+              {joinRequests.map((request) => (
+                <div
+                  key={request.socketId}
+                  className="mx-2 flex items-center gap-3 rounded-2xl px-4 py-3 transition-colors hover:bg-[#eef3fb]"
+                >
+                  <MeetAvatar
+                    name={request.displayName}
+                    email={request.email}
+                    image={request.image}
+                    size="md"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] font-medium leading-5 text-[#202124]">
+                      {request.displayName}
+                    </p>
+                    <p className="truncate text-[13px] leading-5 text-[#5f6368]">
+                      {request.email || "Guest"}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-col-reverse gap-2 border-t border-[#e8eaed] px-6 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => handleDenyGuestFromDialog(joinRequests[0].socketId)}
+                className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
+              >
+                Deny entry
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAdmitGuestFromDialog(joinRequests[0].socketId)}
+                className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#1765cc]"
+              >
+                Admit
+              </button>
+            </div>
+          </section>
         </div>
       )}
 
@@ -1348,15 +1828,16 @@ export default function MeetingRoom() {
             <div
               className={[
                 "flex flex-1 flex-col min-h-0 gap-2 sm:gap-3 w-full max-w-[1800px] mx-auto",
-                meetingLayout === "spotlight" ? "" : "md:flex-row",
+                stageLayoutIsSpotlight ? "" : "md:flex-row",
               ].join(" ")}
             >
-              <div className="relative flex-1 min-h-[40vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg">
+              <div className="relative flex-1 min-h-[38vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg transition-all duration-300">
                 {stageHasVisibleVideo ? (
                   <ParticipantVideo
                     stream={presenterStream}
                     isLocal={stageParticipantId === "local"}
                     muted={stageParticipantId === "local"}
+                    sinkDeviceId={stageParticipantId === "local" ? undefined : selectedAudioOutputId}
                     fit={isStageScreenShare ? "contain" : "cover"}
                   />
                 ) : (
@@ -1420,7 +1901,7 @@ export default function MeetingRoom() {
               <div
                 className={[
                   "flex shrink-0 gap-2 overflow-x-auto pb-1 no-scrollbar",
-                  meetingLayout === "spotlight"
+                  stageLayoutIsSpotlight
                     ? "md:overflow-x-auto"
                     : "md:flex-col md:overflow-x-hidden md:overflow-y-auto md:w-44 lg:w-52 md:max-h-full md:pb-0",
                 ].join(" ")}
@@ -1428,10 +1909,10 @@ export default function MeetingRoom() {
                 {showLocalInFilmstrip && (
                   <div
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
-                      meetingLayout === "spotlight" ? "md:w-44" : "md:w-full",
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10 transition-all duration-300",
+                      stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
                       pinnedParticipantId === "local" ? "ring-2 ring-[#8ab4f8]" : "",
-                      activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
+                      activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                     ].join(" ")}
                     onClick={() => handleSelectParticipant("local")}
                     onDoubleClick={() => handleToggleParticipantPin("local")}
@@ -1472,9 +1953,9 @@ export default function MeetingRoom() {
                   <div
                     key={p.socketId}
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
-                      meetingLayout === "spotlight" ? "md:w-44" : "md:w-full",
-                      activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
+                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10 transition-all duration-300",
+                      stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
+                      activeSpeakerId === p.socketId ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                       pinnedParticipantId === p.socketId ? "ring-2 ring-[#8ab4f8]" : "",
                       p.isScreenSharing ? "ring-2 ring-[#8ab4f8]" : "",
                     ].join(" ")}
@@ -1483,7 +1964,12 @@ export default function MeetingRoom() {
                     title="Click to focus participant"
                   >
                     {hasVisibleVideo(p.stream, p.isCameraOn, p.isScreenSharing) ? (
-                      <ParticipantVideo stream={p.stream} isLocal={false} muted={false} />
+                      <ParticipantVideo
+                        stream={p.stream}
+                        isLocal={false}
+                        muted={false}
+                        sinkDeviceId={selectedAudioOutputId}
+                      />
                     ) : (
                       <div className="flex h-full items-center justify-center">
                         <MeetAvatar
@@ -1520,14 +2006,17 @@ export default function MeetingRoom() {
               {/* 1. Local Participant Card */}
               <div
                 className={[
-                  "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                  "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center transition-all duration-300",
                   // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
-                  pinnedParticipantId === "local"
+                  pinnedParticipantId === "local" || isScreenSharing
                     ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                     : "",
-                  activeSpeakerId === "local" ? "ring-2 ring-green-400/80" : "",
+                  activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                   isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
                 ].join(" ")}
+                style={{
+                  order: isScreenSharing || pinnedParticipantId === "local" ? -20 : presenterId || pinnedParticipantId ? 10 : 0,
+                }}
                 onClick={() => handleSelectParticipant("local")}
                 onDoubleClick={() => handleToggleParticipantPin("local")}
                 title="Click to focus yourself"
@@ -1591,13 +2080,23 @@ export default function MeetingRoom() {
                 <div
                   key={p.socketId}
                   className={[
-                    "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
-                    pinnedParticipantId === p.socketId
+                    "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center transition-all duration-300",
+                    pinnedParticipantId === p.socketId || p.isScreenSharing
                       ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                       : "",
-                    activeSpeakerId === p.socketId ? "ring-2 ring-green-400/80" : "",
+                    activeSpeakerId === p.socketId ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                     isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
                   ].join(" ")}
+                  style={{
+                    order:
+                      p.socketId === pinnedParticipantId
+                        ? -30
+                        : p.socketId === presenterId
+                          ? -20
+                          : p.socketId === activeSpeakerId
+                            ? -10
+                            : 0,
+                  }}
                   onClick={() => handleSelectParticipant(p.socketId)}
                   onDoubleClick={() => handleToggleParticipantPin(p.socketId)}
                   title="Click to focus participant"
@@ -1607,6 +2106,7 @@ export default function MeetingRoom() {
                       stream={p.stream}
                       isLocal={false}
                       muted={false}
+                      sinkDeviceId={selectedAudioOutputId}
                       fit={p.isScreenSharing ? "contain" : "cover"}
                     />
                   ) : (
@@ -1861,24 +2361,74 @@ export default function MeetingRoom() {
         {/* Media Buttons */}
         <div className="flex items-center gap-2 sm:gap-3 mx-auto overflow-x-auto no-scrollbar px-1 max-w-full">
           {/* Audio */}
-          <button
-            onClick={handleToggleMic}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isMicOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
-              }`}
-            title={isMicOn ? "Mute Microphone" : "Unmute Microphone"}
-          >
-            {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-          </button>
+          <div className="relative" ref={audioDeviceMenuRef}>
+            <button
+              onClick={handleToggleMic}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setShowAudioDeviceMenu((prev) => !prev);
+                setShowVideoDeviceMenu(false);
+                setShowEmojiPicker(false);
+                setShowLayoutMenu(false);
+              }}
+              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isMicOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
+                }`}
+              title={isMicOn ? "Mute Microphone" : "Unmute Microphone"}
+            >
+              {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+            </button>
+            {showAudioDeviceMenu && (
+              <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+                {renderDeviceList(
+                  "Microphone",
+                  audioInputDevices,
+                  selectedAudioInputId,
+                  "Microphone",
+                  // eslint-disable-next-line react-hooks/refs
+                  handleSelectAudioInput
+                )}
+                <div className="my-2 h-px bg-white/10" />
+                {renderDeviceList(
+                  "Speaker",
+                  audioOutputDevices,
+                  selectedAudioOutputId,
+                  "Speaker",
+                  handleSelectAudioOutput
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Camera */}
-          <button
-            onClick={handleToggleCamera}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isCameraOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
-              }`}
-            title={isCameraOn ? "Turn Camera Off" : "Turn Camera On"}
-          >
-            {isCameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
-          </button>
+          <div className="relative" ref={videoDeviceMenuRef}>
+            <button
+              onClick={handleToggleCamera}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                setShowVideoDeviceMenu((prev) => !prev);
+                setShowAudioDeviceMenu(false);
+                setShowEmojiPicker(false);
+                setShowLayoutMenu(false);
+              }}
+              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isCameraOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
+                }`}
+              title={isCameraOn ? "Turn Camera Off" : "Turn Camera On"}
+            >
+              {isCameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
+            </button>
+            {showVideoDeviceMenu && (
+              <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+                {renderDeviceList(
+                  "Camera",
+                  videoInputDevices,
+                  selectedVideoInputId,
+                  "Camera",
+                  // eslint-disable-next-line react-hooks/refs
+                  handleSelectVideoInput
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Screen Share */}
           <button
@@ -1903,6 +2453,8 @@ export default function MeetingRoom() {
               onClick={() => {
                 setShowLayoutMenu((prev) => !prev);
                 setShowEmojiPicker(false);
+                setShowAudioDeviceMenu(false);
+                setShowVideoDeviceMenu(false);
               }}
               className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showLayoutMenu ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
                 }`}
@@ -1942,6 +2494,8 @@ export default function MeetingRoom() {
               onClick={() => {
                 setShowEmojiPicker((prev) => !prev);
                 setShowLayoutMenu(false);
+                setShowAudioDeviceMenu(false);
+                setShowVideoDeviceMenu(false);
               }}
               className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showEmojiPicker ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
                 }`}

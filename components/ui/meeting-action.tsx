@@ -25,6 +25,7 @@ export function MeetingActions() {
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [showMorePhoneNumbers, setShowMorePhoneNumbers] = useState(false);
 
   const [joining, setJoining] = useState(false);
   const [creatingLater, setCreatingLater] = useState(false);
@@ -152,7 +153,7 @@ export function MeetingActions() {
           </div>
 
           {openDropdown && (
-            <div className="absolute left-0 top-16 z-50 w-[300px] rounded-2xl border bg-white p-2 shadow-xl">
+            <div className="absolute left-0 top-16 z-50 w-[300px] rounded-2xl  bg-gray-100 p-2 shadow-xl">
 
               {/* CREATE LATER */}
 
@@ -227,6 +228,7 @@ export function MeetingActions() {
 </Button>
       </div>
 
+
       {error && (
         <p className="mt-3 text-sm text-[#d93025]" role="alert">
           {error}
@@ -296,12 +298,45 @@ export function MeetingActions() {
         </div>
 
         {/* More phone numbers */}
-        <button className="mt-8 flex items-center gap-3 text-[#1a73e8] hover:underline">
+        <button
+          onClick={() => setShowMorePhoneNumbers((value) => !value)}
+          className="mt-8 flex items-center gap-3 text-[#1a73e8] hover:underline"
+          type="button"
+        >
           <Phone size={18} />
           <span className="text-[16px]">
-            More phone numbers
+            {showMorePhoneNumbers ? "Hide phone numbers" : "More phone numbers"}
           </span>
         </button>
+
+        {showMorePhoneNumbers && (
+          <div className="mt-6 rounded-[20px] border border-[#dfe1e5] bg-white p-4 text-[#202124] shadow-sm">
+            <p className="text-[15px] font-medium">
+              To join your meeting, dial one of these numbers and then enter this PIN:
+            </p>
+            <p className="mt-1 text-[15px] text-[#5f6368]">617 403 022#</p>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {[
+                ["Albania (AL)", "+355 4 530 1809"],
+                ["Angola (AO)", "+244 226 425 540"],
+                ["Argentina (AR)", "+54 11 3986-3700"],
+                ["Australia (AU)", "+61 2 8320 4510"],
+                ["Austria (AT)", "+43 1 22781000"],
+                ["Barbados (BB)", "+1 246-623-9887"],
+                ["Belgium (BE)", "+32 2 896 35 00"],
+                ["Benin (BJ)", "+229 01 61 50 99 90"],
+                ["Brazil (BR)", "+55 21 3500-1798"],
+                ["Bulgaria (BG)", "+359 2 907 4000"],
+              ].map(([country, number]) => (
+                <div key={country} className="rounded-2xl bg-[#f8f9fa] p-3">
+                  <p className="text-[14px] font-medium text-[#202124]">{country}</p>
+                  <p className="mt-1 text-[15px] text-[#5f6368]">{number}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Share full details */}
         <button className="mt-8 flex items-center gap-3 text-[#1a73e8] hover:underline">

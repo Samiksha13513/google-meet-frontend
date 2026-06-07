@@ -136,6 +136,8 @@ export class MeetingPeerSession {
       // Bind dynamic signaling socket events
       this.bindSocketEvents();
 
+      await this.waitForInitialLocalTracks(identity);
+
       // Ask to join room
       this.socket.emit("join-request", { roomId: this.roomId, ...identity });
       console.log("[WebRTC:Mesh] join-request emitted for:", identity.displayName);
@@ -153,6 +155,50 @@ export class MeetingPeerSession {
 
   setLocalMicAudioTrack(track: MediaStreamTrack | null): void {
     this.localMicAudioTrack = track;
+  }
+
+  async replaceLocalTrack(kind: "audio" | "video", track: MediaStreamTrack | null): Promise<void> {
+    const oldTrack =
+      kind === "audio" ? this.localMicAudioTrack : this.localCameraVideoTrack;
+
+    if (kind === "audio") {
+      this.localMicAudioTrack = track;
+    } else {
+      this.localCameraVideoTrack = track;
+    }
+
+    if (oldTrack && oldTrack !== track) {
+      this.localStream.removeTrack(oldTrack);
+    }
+    if (track && !this.localStream.getTracks().some((streamTrack) => streamTrack.id === track.id)) {
+      this.localStream.addTrack(track);
+    }
+
+    const activeScreenTrack =
+      kind === "video"
+        ? this.screenShareStream?.getVideoTracks().find((screenTrack) => screenTrack.readyState === "live")
+        : this.screenShareStream?.getAudioTracks().find((screenTrack) => screenTrack.readyState === "live");
+
+    for (const [socketId, peer] of this.peers.entries()) {
+      if (peer.connectionState === "closed") continue;
+      try {
+        const sender = peer.getSenders().find((s) => s.track?.kind === kind);
+        const outboundTrack = activeScreenTrack && kind === "video" ? activeScreenTrack : track;
+
+        if (sender) {
+          await sender.replaceTrack(outboundTrack);
+        } else if (outboundTrack) {
+          peer.addTrack(outboundTrack, activeScreenTrack ? this.screenShareStream! : this.localStream);
+        }
+        await this.sendOffer(socketId);
+      } catch (err) {
+        console.error(`[WebRTC:Mesh] ${kind} device replaceTrack failed for ${socketId}:`, err);
+      }
+    }
+
+    if (oldTrack && oldTrack !== track) {
+      oldTrack.stop();
+    }
   }
 
   /** Replace outbound video with screen track on every peer (Google Meet style) */
@@ -481,6 +527,7 @@ export class MeetingPeerSession {
     });
 
     // Add local tracks (camera / mic)
+    this.syncCachedLocalTracks();
     this.localStream.getTracks().forEach((track) => {
       peer.addTrack(track, this.localStream);
       console.log(`[WebRTC:Mesh] Added local track (${track.kind}) to peer ${socketId}`);
@@ -503,6 +550,56 @@ export class MeetingPeerSession {
     }
 
     return peer;
+  }
+
+  private syncCachedLocalTracks(): void {
+    const videoTrack = this.localStream.getVideoTracks().find((track) => track.readyState === "live") || null;
+    const audioTrack = this.localStream.getAudioTracks().find((track) => track.readyState === "live") || null;
+
+    if (videoTrack) {
+      this.localCameraVideoTrack = videoTrack;
+    }
+    if (audioTrack) {
+      this.localMicAudioTrack = audioTrack;
+    }
+  }
+
+  private waitForTrackReady(track: MediaStreamTrack | undefined, shouldBeEnabled: boolean): Promise<void> {
+    if (!track || track.readyState !== "live" || !shouldBeEnabled || !track.muted) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      let done = false;
+      const cleanup = () => {
+        track.removeEventListener("unmute", onReady);
+        track.removeEventListener("ended", onReady);
+      };
+      const onReady = () => {
+        if (done) return;
+        done = true;
+        cleanup();
+        resolve();
+      };
+
+      track.addEventListener("unmute", onReady);
+      track.addEventListener("ended", onReady);
+      setTimeout(onReady, 1200);
+    });
+  }
+
+  private async waitForInitialLocalTracks(identity: { isMicOn?: boolean; isCameraOn?: boolean }): Promise<void> {
+    this.syncCachedLocalTracks();
+
+    const videoTrack = this.localStream.getVideoTracks()[0];
+    const audioTrack = this.localStream.getAudioTracks()[0];
+
+    await Promise.all([
+      this.waitForTrackReady(videoTrack, identity.isCameraOn !== false),
+      this.waitForTrackReady(audioTrack, identity.isMicOn !== false),
+    ]);
+
+    this.syncCachedLocalTracks();
   }
 
   private addPeerCleanup(socketId: string, cleanup: () => void): void {
