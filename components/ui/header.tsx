@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Flag, HelpCircle, LayoutGrid, Menu, Settings } from "lucide-react";
+import { LayoutGrid, Menu } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 
@@ -118,35 +118,7 @@ export function Header({ onMenuClick, isSidebarOpen = true }: HeaderProps) {
           {currentTime} &bull; {currentDate}
         </span>
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="hidden h-10 w-10 rounded-full text-[#5f6368] hover:bg-[#f1f3f4] sm:inline-flex"
-          title="Help"
-        >
-          <HelpCircle className="h-5 w-5 stroke-[1.8]" />
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="hidden h-10 w-10 rounded-full text-[#5f6368] hover:bg-[#f1f3f4] md:inline-flex"
-          title="Send feedback"
-        >
-          <Flag className="h-5 w-5 stroke-[1.8]" />
-        </Button>
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="hidden h-10 w-10 rounded-full text-[#5f6368] hover:bg-[#f1f3f4] sm:inline-flex"
-          title="Settings"
-        >
-          <Settings className="h-5 w-5 stroke-[1.8]" />
-        </Button>
+        {/* Help, Feedback and Settings intentionally removed to match requested header */}
 
         <Button
           type="button"
