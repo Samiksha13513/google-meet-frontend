@@ -761,7 +761,7 @@ export default function MeetingRoom() {
 
   const handleSelectParticipant = (participantId: string) => {
     setPinnedParticipantId((prev) => (prev === participantId ? prev : participantId));
-    if (meetingLayout === "grid" || meetingLayout === "tiled") {
+    if (meetingLayout === "tiled") {
       setMeetingLayout("auto");
     }
   };
