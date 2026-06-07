@@ -1690,6 +1690,29 @@ export default function MeetingRoom() {
   );
   const ActiveLayoutIcon = activeLayout.icon;
 
+  // Participant status text (Google Meet-like)
+  const formatParticipantNames = (items: Participant[]) => {
+    const names = items.map((p) => p.displayName || "Participant");
+    if (names.length === 1) return `${names[0]} in call`;
+    if (names.length === 2) return `${names[0]} and ${names[1]} in call`;
+    if (names.length === 3) return `${names[0]}, ${names[1]}, and ${names[2]} in call`;
+    return "";
+  };
+
+  const renderParticipantStatus = () => {
+    if (participants.length === 0) {
+      return "No one else is here";
+    }
+
+    // For small numbers, show participant names like Google Meet; otherwise show count.
+    if (participants.length <= 3) {
+      const namesText = formatParticipantNames(participants);
+      if (namesText) return namesText;
+    }
+
+    return `${totalConferencingUsers} people in call`;
+  };
+
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
       {/* Floating Join Request Modal (Host only) */}
@@ -1819,6 +1842,15 @@ export default function MeetingRoom() {
             </span>
           </div>
         ))}
+      </div>
+
+      {/* Participant status (Google Meet-like) - top center */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+        <div className="pointer-events-none">
+          <div className="inline-flex items-center gap-2 rounded-full bg-black/60 text-white px-3 py-1.5 text-sm font-medium shadow-sm">
+            <span className="leading-none">{renderParticipantStatus()}</span>
+          </div>
+        </div>
       </div>
 
       {/* Main video area — grid or presenter layout */}
