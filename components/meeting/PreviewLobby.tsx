@@ -147,7 +147,15 @@ export function PreviewLobby({
   const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
   const participants = useMeetingStore((s) => s.participants || []);
 
-  const others = participants.filter((p) => p.id !== socket.id);
+  // Determine participant identity key (server may provide `socketId` or `id`)
+  const others = participants.filter((p) => {
+    const participantSocketId = (p as any).socketId ?? (p as any).id ?? null;
+    // Exclude local socket and exclude users who are still in waiting room
+    const status = (p as any).status ?? null;
+    if (participantSocketId === socket.id) return false;
+    if (status === "IN_WAITING_ROOM") return false;
+    return true;
+  });
 
   const formatNames = (items: typeof participants) => {
     const names = items.map((p) => p.displayName).filter(Boolean) as string[];
