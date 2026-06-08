@@ -1,6 +1,6 @@
 "use client";
 
-import { Phone, Video } from "lucide-react";
+import { Phone, Video, Calendar } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -13,7 +13,7 @@ const navItems: (NavItem & { primary?: boolean })[] = [
   {
     id: "meetings",
     label: "Meetings",
-    icon: <Video className="h-5 w-5 stroke-[1.8]" />,
+    icon: <Calendar className="h-5 w-5 stroke-[1.8]" />,
     primary: true,
   },
   {
@@ -42,7 +42,7 @@ export function Sidebar({
   return (
     <aside
       className={cn(
-        "shrink-0 border-r border-transparent bg-white py-2 transition-all duration-200 ease-out",
+        "group shrink-0 border-r border-transparent bg-white py-2 transition-all duration-200 ease-out",
         isMobile
           ? "fixed bottom-0 left-0 top-16 z-40 w-[256px] shadow-xl"
           : isOpen
@@ -62,24 +62,28 @@ export function Sidebar({
               onClick={() => onItemClick?.(item.id)}
               title={!isOpen && !isMobile ? item.label : undefined}
               className={cn(
-                "group flex h-12 items-center rounded-full text-sm font-medium transition-colors",
+                "group/button flex h-12 items-center rounded-full text-sm font-medium transition-colors",
                 isOpen || isMobile ? "gap-4 px-4" : "justify-center px-0",
                 isActive ? "bg-[#e8f0fe] text-[#1967d2]" : "text-[#3c4043] hover:bg-[#f1f3f4]"
               )}
             >
               <span
                 className={cn(
-                  "flex h-5 w-5 shrink-0 items-center justify-center",
-                  isActive ? "text-[#1967d2]" : "text-[#5f6368]"
+                  "flex h-5 w-5 shrink-0 items-center justify-center transition-all duration-150",
+                  isActive ? "text-[#1967d2]" : "text-[#5f6368]",
+                  !isOpen && !isMobile ? "opacity-0 translate-x-0 group-hover:opacity-100 group-hover:translate-x-0" : "opacity-100"
                 )}
+                aria-hidden={!isOpen && !isMobile}
               >
                 {item.icon}
               </span>
+
               <span
                 className={cn(
                   "whitespace-nowrap transition-[opacity,width] duration-150",
-                  isOpen || isMobile ? "w-auto opacity-100" : "w-0 overflow-hidden opacity-0"
+                  isOpen || isMobile ? "w-auto opacity-100" : "w-0 overflow-hidden opacity-0 group-hover:opacity-100 group-hover:w-auto"
                 )}
+                aria-hidden={!isOpen && !isMobile}
               >
                 {item.label}
               </span>
