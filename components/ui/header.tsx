@@ -105,9 +105,9 @@ export function Header({ onMenuClick, isSidebarOpen = true }: HeaderProps) {
           <Image
             src={MEET_LOGO_URL}
             alt="Google Meet"
-            width={124}
+            width={99}
             height={32}
-            className="h-8 w-[124px] object-contain"
+            className="h-8 w-[99px] object-contain"
             priority
           />
         </button>

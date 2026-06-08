@@ -74,9 +74,9 @@ export default function Home() {
               <Image
               src={MEET_LOGO_URL}
               alt="Google Meet Logo"
-              width={172}
-              height={32}
-              className="object-contain"
+              width={124}
+              height={40}
+              className="h-10 w-[124px] object-contain"
             />
         
             </div>
