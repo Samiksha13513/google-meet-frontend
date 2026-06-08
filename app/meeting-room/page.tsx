@@ -1502,7 +1502,12 @@ export default function MeetingRoom() {
 
   // Responsive grid sizing (Google Meet-like): auto-fit tiles without horizontal overflow.
   // UI-only: does not affect any meeting logic.
-  const totalConferencingUsers = participants.length + 1; // Participants + local user
+  // Use deduped active participants (exclude waiting room) for counts and layouts
+  const activeParticipants = dedupeParticipants(participants).filter((p) => {
+    const status = (p as any).status ?? null;
+    return status !== "IN_WAITING_ROOM";
+  });
+  const totalConferencingUsers = activeParticipants.length + 1; // Participants + local user
   const isTwoUp = totalConferencingUsers === 2;
   const layoutOptions: Array<{
     id: MeetingLayout;
@@ -1543,7 +1548,7 @@ export default function MeetingRoom() {
     pinnedParticipantId || presenterId || (layoutWantsStage ? defaultStageParticipantId : null);
   const useStageLayout =
     Boolean(stageParticipantId) && layoutWantsStage;
-  const orderedParticipants = [...participants].sort((a, b) => {
+  const orderedParticipants = [...activeParticipants].sort((a, b) => {
     if (a.socketId === pinnedParticipantId) return -1;
     if (b.socketId === pinnedParticipantId) return 1;
     if (a.socketId === presenterId) return -1;
@@ -1624,23 +1629,59 @@ export default function MeetingRoom() {
     micOn,
     screenSharing,
     compact = false,
-  }: {
-    id: string;
-    name: string;
-    host: boolean;
-    handRaised?: boolean;
-    micOn: boolean;
-    screenSharing: boolean;
-    compact?: boolean;
-  }) => (
-    <>
-      {handRaised && (
-        <div className={`absolute ${compact ? "top-2 right-2 h-7 w-7" : "top-4 right-4 h-9 w-9"} z-20 flex items-center justify-center rounded-full bg-yellow-400 text-black shadow-xl`}>
-          <Hand className={compact ? "h-4 w-4" : "h-5 w-5"} />
+  ) => {
+    const level = audioLevelsRef.current[id] || 0;
+    const showActivity = micOn && level > 0.04;
+    const activityScale = Math.min(1.6, 0.6 + level * 2.5);
+
+    return (
+      <>
+        {handRaised && (
+          <div className={`absolute ${compact ? "top-2 right-2 h-7 w-7" : "top-4 right-4 h-9 w-9"} z-20 flex items-center justify-center rounded-full bg-yellow-400 text-black shadow-xl animate-pulse`}> 
+            <Hand className={compact ? "h-4 w-4" : "h-5 w-5"} />
+          </div>
+        )}
+
+        {/* Mic activity indicator */}
+        {showActivity && (
+          <div
+            aria-hidden
+            className={`absolute ${compact ? "top-2 left-2" : "top-4 left-4"} z-10 flex items-center justify-center`}
+            style={{
+              width: compact ? 18 : 22,
+              height: compact ? 18 : 22,
+            }}
+          >
+            <span
+              className="absolute rounded-full bg-[rgba(52,168,83,0.18)]"
+              style={{
+                width: (compact ? 18 : 22) * activityScale,
+                height: (compact ? 18 : 22) * activityScale,
+                transform: `translate(-50%,-50%)`,
+                left: 6,
+                top: 6,
+                transition: "width 160ms linear, height 160ms linear, opacity 160ms linear",
+                opacity: Math.min(1, 0.35 + level * 1.2),
+              }}
+            />
+            <span
+              className="relative z-20 block rounded-full bg-[#34A853]"
+              style={{ width: compact ? 10 : 12, height: compact ? 10 : 12 }}
+            />
+          </div>
+        )}
+
+        <div className={`absolute ${compact ? "bottom-1 left-1 px-2 py-0.5 text-[10px]" : "bottom-3 left-3 px-3 py-1.5 text-xs"} z-20 flex max-w-[80%] items-center gap-2 rounded-full border border-white/10 bg-black/60 font-light tracking-wide backdrop-blur-md`}>
+          <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
+          {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
+          {handRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
+          {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
+          {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
+          {pinnedParticipantId === id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
         </div>
-      )}
-      <div className={`absolute ${compact ? "bottom-1 left-1 px-2 py-0.5 text-[10px]" : "bottom-3 left-3 px-3 py-1.5 text-xs"} z-20 flex max-w-[80%] items-center gap-2 rounded-full border border-white/10 bg-black/60 font-light tracking-wide backdrop-blur-md`}>
-        <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
+      </>
+    );
+  };
         {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
         {handRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
         {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
@@ -1700,8 +1741,8 @@ export default function MeetingRoom() {
   };
 
   const renderParticipantStatus = () => {
-    // Exclude local user from the "others" list so we never show the host as "in call" when alone
-    const others = participants.filter((p) => p.socketId !== socket.id);
+    // Use active participants (exclude waiting room) and exclude local user
+    const others = activeParticipants.filter((p) => p.socketId !== socket.id);
 
     if (others.length === 0) {
       return "No one else is here";
@@ -2320,7 +2361,7 @@ export default function MeetingRoom() {
               </div>
 
               {/* Remote members list */}
-              {participants.map((p) => (
+              {activeParticipants.map((p) => (
                 <div key={p.socketId} className="flex justify-between items-center p-3 rounded-xl hover:bg-white/5 transition-colors">
                   <div className="flex items-center gap-3">
                     <MeetAvatar

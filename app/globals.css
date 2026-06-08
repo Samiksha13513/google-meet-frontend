@@ -6,6 +6,20 @@
 
   --font-google: "Google Sans Text", "Google Sans", Roboto, Arial,
     "Noto Sans JP", "Noto Sans KR", sans-serif;
+
+  /* Google Meet palette */
+  --meet-blue: #1a73e8;
+  --meet-yellow: #f4b400;
+  --meet-green: #34a853;
+  --meet-red: #d93025;
+  --meet-border: #dadce0;
+  --meet-surface: #f8fafd;
+  --meet-muted: #5f6368;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 28px;
+  --shadow-lg: 0 12px 36px rgba(2,6,23,0.32);
 }
 
 @theme inline {
@@ -27,6 +41,31 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-google);
+}
+
+/* Meet-style utility helpers */
+.meet-btn-primary {
+  background-color: var(--meet-blue);
+  color: white;
+  border-radius: 9999px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.04);
+}
+
+.meet-modal {
+  border-radius: var(--radius-lg);
+  background: var(--meet-surface);
+  box-shadow: var(--shadow-lg);
+}
+
+@keyframes pulseRing {
+  0% { transform: scale(0.8); opacity: 0.45; }
+  50% { transform: scale(1.15); opacity: 0.25; }
+  100% { transform: scale(0.9); opacity: 0.0; }
+}
+
+.mic-activity-ring {
+  border-radius: 9999px;
+  animation: pulseRing 900ms ease-out infinite;
 }
 
 /* Hide scrollbars (Google Meet-like control strip) */
