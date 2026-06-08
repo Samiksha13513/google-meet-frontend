@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "prebuild": "node -e \"const v=process.versions.node.split('.').map(Number); if(v[0]<20 || (v[0]===20 && v[1]<9)){ console.error('ERROR: Node >=20.9.0 is required to build this project. Current: ' + process.versions.node); process.exit(1);} \"",
     "start": "next start",
     "lint": "eslint",
     "storybook": "storybook dev -p 6006",
