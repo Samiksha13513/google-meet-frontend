@@ -27,160 +27,78 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-white">
       {/* Header */}
-      <header className="sticky top-0 z-50 bg-background border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          {/* Logo and Company */}
-          <div className="flex items-center gap-12">
-         <div className="flex items-center -ml-16 text-2xl tracking-tight">
-          <span className="text-[#4285F4]">G</span>
-          <span className="text-[#EA4335]">o</span>
-          <span className="text-[#FBBC05]">o</span>
-          <span className="text-[#4285F4]">g</span>
-          <span className="text-[#34A853]">l</span>
-          <span className="text-[#EA4335]">e</span>
-
-          <span className="ml-2 text-gray-600 font-normal">
-            Workspace
-          </span>
-        </div>
-          
+      <header className="sticky top-0 z-50 bg-white">
+        <div className="max-w-7xl mx-auto px-8 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Image src={MEET_LOGO_URL} alt="Google Meet" width={92} height={28} className="h-7 w-auto object-contain" />
           </div>
 
-          {/* Right Actions */}
-          <div className="flex items-center gap-3">
-            <Button variant="outline" className="hidden sm:inline-flex rounded-full border-2 px-6 py-2 h-auto text-sm" style={{ borderColor: '#dadce0', color: '#1a73e8' }}>
-              Try Meet for work
+          <div>
+            <Button
+              onClick={() => googleLogin()}
+              className="text-[#1a73e8] bg-transparent hover:bg-transparent px-2 py-1 text-sm rounded"
+            >
+              Sign in
             </Button>
-         <Button
-          onClick={() => googleLogin()}
-          className="rounded-full text-white px-8 py-3 text-base h-auto"
-          style={{ backgroundColor: '#1a73e8' }}
-        >
-          Sign in
-        </Button>
           </div>
         </div>
       </header>
 
-      {/* Main Hero Section */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-1 lg:py-6">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
-          {/* Left Content */}
-          <div >
-            {/* Google Meet Logo */}
-            <div className="flex items-center gap-2">
-              <Image
-              src={MEET_LOGO_URL}
-              alt="Google Meet Logo"
-              width={124}
-              height={40}
-              className="h-10 w-[124px] object-contain"
-            />
-        
-            </div>
-
-            {/* Headline */}
-            <div className="space-y-4">
-           <h1 className="text-5xl lg:text-5xl text-[#202124] font-bold leading-tight">
-                Video calls, <br />
-                enhanced with AI
-              </h1>
-              <p className="text-lg text-muted-foreground text-[#5F6368] max-w-lg">
-                Make connecting easy with AI-powered video calls that enable collaboration and expression.
-              </p>
-            </div>
-
-            {/* CTA Buttons */}
-            <div className="flex flex-col sm:flex-row gap-4 mt-4 items-start sm:items-center">
-             <Button
-            onClick={() => googleLogin()}
-            className="rounded-full text-white py-2 px-6 h-auto text-sm"
-            style={{ backgroundColor: '#1a73e8' }}
-          >
-            Sign in
-          </Button>
-              <Button
-                variant="outline"
-                className="rounded-full px-8 py-3 text-base h-auto border-2 hover:bg-muted"
-                style={{ borderColor: '#dadce0', color: '#1a73e8' }}
-              >
-                Try Meet for work
-              </Button>
-            </div>
-
-            {/* Join Meeting Section */}
-            <div className="pt-4 flex items-center gap-3 flex-wrap">
-              <p className="text-sm font-medium text-foreground">Join a meeting now</p>
-              {!showCodeInput ? (
-                <>
-                  <button
-                    onClick={() => setShowCodeInput(true)}
-                    className="text-blue-600 hover:text-blue-700 underline text-sm font-medium transition"
-                    style={{ color: '#1a73e8' }}
-                  >
-                    Enter code
-                  </button>
-                  <button
-                    onClick={() => alert('Join a meeting using the meeting code. Ask your organizer for the meeting code.')}
-                    className="text-muted-foreground hover:text-foreground"
-                    title="Info"
-                  >
-                    ℹ️
-                  </button>
-                </>
-              ) : (
-                <div className="flex items-center gap-2 border-2 rounded-lg p-1 bg-white" style={{ borderColor: '#1a73e8' }}>
-                  <Input
-                    placeholder="Enter code"
-                    value={meetingCode}
-                    onChange={(e) => setMeetingCode(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter' && meetingCode.trim()) {
-                        goToMeeting(meetingCode);
-                        setMeetingCode('');
-                        setShowCodeInput(false);
-                      }
-                    }}
-                    className="border-0 outline-none focus:outline-none focus:ring-0 text-sm py-2 px-3"
-                  />
-                  <Button
-                    onClick={() => {
-                      if (meetingCode.trim()) {
-                        goToMeeting(meetingCode);
-                        setMeetingCode('');
-                        setShowCodeInput(false);
-                      }
-                    }}
-                    className="bg-transparent hover:bg-transparent text-sm font-medium px-3"
-                    style={{ color: '#1a73e8' }}
-                  >
-                    Join
-                  </Button>
-                  <button
-                    onClick={() => alert('Join a meeting using the meeting code. Ask your organizer for the meeting code.')}
-                    className="text-muted-foreground hover:text-foreground px-2"
-                    title="Info"
-                  >
-                    ℹ️
-                  </button>
+      {/* Main content */}
+      <main className="max-w-7xl mx-auto px-8 py-12">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-start">
+          {/* Left - Video Preview */}
+          <div>
+            <div className="rounded-2xl overflow-hidden bg-gray-100 shadow-sm">
+              <div className="relative bg-black/5" style={{ borderRadius: 16 }}>
+                <VideoCallMockup />
+                {/* Overlay center buttons */}
+                <div className="absolute left-1/2 -translate-x-1/2 bottom-8 flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-full bg-white shadow flex items-center justify-center">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-gray-700"><path d="M12 14a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  </div>
+                  <div className="h-12 w-12 rounded-full bg-white shadow flex items-center justify-center">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-gray-700"><rect x="3" y="7" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.4"/></svg>
+                  </div>
+                  <div className="h-12 w-12 rounded-full bg-white shadow flex items-center justify-center">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-gray-700"><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.4"/></svg>
+                  </div>
                 </div>
-              )}
+              </div>
+            </div>
+
+            {/* Device selectors row */}
+            <div className="mt-6 flex flex-wrap gap-3">
+              <button className="rounded-full border px-4 py-2 text-sm bg-white shadow-sm">Microphone (Default)</button>
+              <button className="rounded-full border px-4 py-2 text-sm bg-white shadow-sm">Speakers (Default)</button>
+              <button className="rounded-full border px-4 py-2 text-sm bg-white shadow-sm">Camera (Default)</button>
+              <button className="rounded-full border px-4 py-2 text-sm bg-white shadow-sm">Backgrounds</button>
             </div>
           </div>
 
-          {/* Right Video Call Mockup */}
-          <div className="hidden lg:block">
-            <VideoCallMockup />
+          {/* Right - Name input & actions */}
+          <div className="flex flex-col items-start justify-center pt-8 lg:pt-0">
+            <h2 className="text-2xl font-medium text-[#202124] mb-4">What's your name?</h2>
+            <div className="w-full max-w-sm">
+              <input
+                placeholder="Your name"
+                maxLength={60}
+                className="w-full border rounded-md px-4 py-3 text-lg focus:outline-none"
+              />
+              <div className="mt-4">
+                <button className="w-full rounded-full bg-gray-200 text-gray-500 py-3">Ask to join</button>
+              </div>
+              <div className="mt-4">
+                <button className="w-full rounded-full border py-3">Other ways to join</button>
+              </div>
+            </div>
+
+            <p className="mt-8 text-xs text-gray-500 max-w-sm">By joining, you agree to the <a className="underline">Terms of Service</a> and <a className="underline">Privacy Policy</a>. System info will be sent to confirm you're not a bot.</p>
           </div>
         </div>
       </main>
-
-      {/* Mobile Video Call Mockup */}
-      <div className="lg:hidden max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <VideoCallMockup />
-      </div>
     </div>
   );
 }
