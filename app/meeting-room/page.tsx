@@ -1533,7 +1533,7 @@ export default function MeetingRoom() {
   const effectiveLayout: MeetingLayout =
     meetingLayout === "auto"
       ? pinnedParticipantId || presenterId
-        ? "spotlight"
+        ? totalConferencingUsers > 1 ? "sidebar" : "spotlight"
         : totalConferencingUsers >= 7
           ? "sidebar"
           : activeSpeakerId && totalConferencingUsers > 2
@@ -2031,6 +2031,7 @@ export default function MeetingRoom() {
                         isLocal={false}
                         muted={false}
                         sinkDeviceId={selectedAudioOutputId}
+                        fit={p.isScreenSharing ? "contain" : "cover"}
                       />
                     ) : (
                       <div className="flex h-full items-center justify-center">
