@@ -1621,15 +1621,8 @@ export default function MeetingRoom() {
     );
   };
 
-  const renderTileBadges = ({
-    id,
-    name,
-    host,
-    handRaised,
-    micOn,
-    screenSharing,
-    compact = false,
-  ) => {
+  const renderTileBadges = (props: any) => {
+    const { id, name, host, handRaised, micOn, screenSharing, compact = false } = props;
     const level = audioLevelsRef.current[id] || 0;
     const showActivity = micOn && level > 0.04;
     const activityScale = Math.min(1.6, 0.6 + level * 2.5);
@@ -1682,14 +1675,6 @@ export default function MeetingRoom() {
       </>
     );
   };
-        {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
-        {handRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
-        {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
-        {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
-        {pinnedParticipantId === id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
-      </div>
-    </>
-  );
   const renderDeviceList = (
     title: string,
     devices: MediaDeviceInfo[],
