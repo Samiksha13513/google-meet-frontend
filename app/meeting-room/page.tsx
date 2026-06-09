@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import {
   Mic,
   MicOff,
@@ -39,7 +39,7 @@ import {
   getScreenShareSupport,
   requestScreenShareStream,
 } from "../../webrtc/screen-share";
-import { detachVideoElement, stopMediaStream } from "../../webrtc/stream-utils";
+import { detachVideoElement, getStreamTrackSignature, stopMediaStream, streamsShareSameTracks } from "../../webrtc/stream-utils";
 import { PreviewLobby } from "@/components/meeting/PreviewLobby";
 import { GuestWaitingLobby } from "@/components/meeting/GuestWaitingLobby";
 import { AdmitGuestControl } from "@/components/meeting/AdmitGuestControl";
@@ -160,7 +160,7 @@ const getMediaDeviceLabel = (
 ) => device.label || `${fallback} ${index + 1}`;
 
 // Isolated Video element component to ensure stable stream attachments and avoid React playback resets
-const ParticipantVideo = ({
+const ParticipantVideo = memo(function ParticipantVideo({
   stream,
   isLocal,
   muted,
@@ -172,8 +172,9 @@ const ParticipantVideo = ({
   muted: boolean;
   sinkDeviceId?: string;
   fit?: "cover" | "contain";
-}) => {
+}) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const attachedSignatureRef = useRef("");
   const [streamUnavailable, setStreamUnavailable] = useState(false);
 
   useEffect(() => {
@@ -181,26 +182,27 @@ const ParticipantVideo = ({
     if (!video) return;
 
     if (!stream) {
-      detachVideoElement(video);
+      if (attachedSignatureRef.current) {
+        detachVideoElement(video);
+        attachedSignatureRef.current = "";
+      }
       setStreamUnavailable(true);
       return;
     }
 
-    setStreamUnavailable(false);
-
+    const signature = getStreamTrackSignature(stream);
     const attach = () => {
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack && videoTrack.readyState === "ended") {
         setStreamUnavailable(true);
-        detachVideoElement(video);
         return;
       }
       setStreamUnavailable(false);
-      
-      // Avoid duplicate srcObject assignments to prevent annoying video flashes/pauses
+
       if (video.srcObject !== stream) {
         video.srcObject = stream;
       }
+      attachedSignatureRef.current = signature;
 
       const sinkVideo = video as SinkIdVideoElement;
       if (!isLocal && sinkDeviceId !== undefined && sinkVideo.setSinkId) {
@@ -208,7 +210,7 @@ const ParticipantVideo = ({
           console.warn("[WebRTC:Audio] Speaker device switch failed:", err);
         });
       }
-      
+
       video.play().catch((err) => {
         console.log(`[WebRTC:Video] Autoplay for ${isLocal ? "local" : "remote"} stream failed:`, err);
       });
@@ -237,9 +239,14 @@ const ParticipantVideo = ({
         track.removeEventListener("mute", handleTrackEvent);
         track.removeEventListener("unmute", handleTrackEvent);
       });
-      detachVideoElement(video);
     };
   }, [stream, isLocal, sinkDeviceId]);
+
+  useEffect(() => {
+    return () => {
+      detachVideoElement(videoRef.current);
+    };
+  }, []);
 
   if (streamUnavailable || !stream) {
     return (
@@ -258,7 +265,7 @@ const ParticipantVideo = ({
       className={`w-full h-full rounded-2xl ${fit === "contain" ? "object-contain bg-black" : "object-cover"}`}
     />
   );
-};
+});
 
 const MeetAvatar = ({
   name,
@@ -393,6 +400,10 @@ export default function MeetingRoom() {
   const lastLocalReactionRef = useRef<{ emoji: string; pendingEcho: boolean } | null>(null);
   const audioLevelsRef = useRef<Record<string, number>>({});
   const participantsRef = useRef<Participant[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioMonitorsRef = useRef<Map<string, () => void>>(new Map());
+  const audioMonitorKeysRef = useRef<Map<string, string>>(new Map());
+  const activeSpeakerRef = useRef<string | null>(null);
 
   const emojiRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -498,7 +509,21 @@ export default function MeetingRoom() {
 
   const upsertParticipant = (participant: Participant) => {
     if (!participant.socketId || participant.socketId === socket.id) return;
-    setParticipants((prev) => dedupeParticipants([...prev, participant]));
+    setParticipants((prev) => {
+      const existing = prev.find((item) => item.socketId === participant.socketId);
+      if (
+        existing &&
+        !participant.stream &&
+        existing.displayName === participant.displayName &&
+        existing.isMicOn === participant.isMicOn &&
+        existing.isCameraOn === participant.isCameraOn &&
+        existing.isHost === participant.isHost &&
+        existing.isScreenSharing === participant.isScreenSharing
+      ) {
+        return prev;
+      }
+      return dedupeParticipants([...prev, participant]);
+    });
   };
 
   const cleanupAll = () => {
@@ -593,7 +618,12 @@ export default function MeetingRoom() {
       sessionRef.current?.setLocalMicAudioTrack(track);
     }
 
-    setLocalStreamForRender(new MediaStream(stream.getTracks()));
+    setLocalStreamForRender((prev) => {
+      const nextStream = localStreamRef.current;
+      if (!nextStream) return null;
+      if (prev && streamsShareSameTracks(prev, nextStream)) return prev;
+      return nextStream;
+    });
   };
 
   const handleSelectAudioInput = async (deviceId: string) => {
@@ -700,11 +730,10 @@ export default function MeetingRoom() {
       await sessionRef.current?.startScreenShare(stream);
       setIsScreenSharing(true);
       setParticipants((prev) =>
-        prev.map((p) => {
-          if (!p.isScreenSharing) return p;
-          const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
-          return { ...p, isScreenSharing: false, stream: streamCopy };
-        })
+        prev.map((p) => ({
+          ...p,
+          isScreenSharing: false,
+        }))
       );
 
       clearScreenShareBindings();
@@ -915,11 +944,15 @@ export default function MeetingRoom() {
         setParticipants((prev) => {
           const exists = prev.find((p) => p.socketId === socketId);
           if (exists) {
+            const keepStream =
+              exists.stream && streamsShareSameTracks(exists.stream, remoteStream)
+                ? exists.stream
+                : remoteStream;
             return dedupeParticipants(prev.map((p) =>
               p.socketId === socketId
                 ? {
                   ...p,
-                  stream: remoteStream,
+                  stream: keepStream,
                   email: p.email || remoteDetails?.email,
                   image: p.image || remoteDetails?.image,
                   displayName: getIdentityLabel({
@@ -966,24 +999,19 @@ export default function MeetingRoom() {
         if (data.socketId === socket.id) return;
         setParticipants((prev) =>
           prev.map((p) => {
-            if (p.socketId === data.socketId) {
-              // Force React to detect track/stream updates by recreating MediaStream reference
-              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
-              return {
-                ...p,
-                isMicOn: data.isMicOn,
-                isCameraOn: data.isCameraOn,
-                isHandRaised: data.isHandRaised ?? p.isHandRaised,
-                displayName: getIdentityLabel({
-                  displayName: data.displayName || p.displayName,
-                  email: data.email || p.email,
-                }),
+            if (p.socketId !== data.socketId) return p;
+            return {
+              ...p,
+              isMicOn: data.isMicOn,
+              isCameraOn: data.isCameraOn,
+              isHandRaised: data.isHandRaised ?? p.isHandRaised,
+              displayName: getIdentityLabel({
+                displayName: data.displayName || p.displayName,
                 email: data.email || p.email,
-                image: data.image || p.image,
-                stream: streamCopy,
-              };
-            }
-            return p;
+              }),
+              email: data.email || p.email,
+              image: data.image || p.image,
+            };
           })
         );
       },
@@ -1060,11 +1088,10 @@ export default function MeetingRoom() {
       onScreenShareStarted: (senderId) => {
         if (senderId === socket.id) {
           setParticipants((prev) =>
-            prev.map((p) => {
-              if (!p.isScreenSharing) return p;
-              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
-              return { ...p, isScreenSharing: false, stream: streamCopy };
-            })
+            prev.map((p) => ({
+              ...p,
+              isScreenSharing: false,
+            }))
           );
           return;
         }
@@ -1074,26 +1101,18 @@ export default function MeetingRoom() {
         }
 
         setParticipants((prev) =>
-          prev.map((p) => {
-            if (p.socketId === senderId || p.isScreenSharing) {
-              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
-              return { ...p, isScreenSharing: p.socketId === senderId, stream: streamCopy };
-            }
-            return p;
-          })
+          prev.map((p) => ({
+            ...p,
+            isScreenSharing: p.socketId === senderId,
+          }))
         );
       },
       onScreenShareStopped: (senderId) => {
         if (senderId === socket.id) return;
         setParticipants((prev) =>
-          prev.map((p) => {
-            if (p.socketId === senderId) {
-              // Recreate the MediaStream reference so React's ParticipantVideo re-triggers the track attachment immediately
-              const streamCopy = p.stream ? new MediaStream(p.stream.getTracks()) : undefined;
-              return { ...p, isScreenSharing: false, stream: streamCopy };
-            }
-            return p;
-          })
+          prev.map((p) =>
+            p.socketId === senderId ? { ...p, isScreenSharing: false } : p
+          )
         );
       },
       onHandRaisedChanged: ({ senderId, isHandRaised }) => {
@@ -1378,7 +1397,7 @@ export default function MeetingRoom() {
     };
   }, [meetingState]);
 
-  // Active speaker detection (UI-only; no signaling flow changes)
+  // Active speaker detection (UI-only; persistent AudioContext avoids rebuild churn)
   useEffect(() => {
     if (meetingState !== "inMeeting") return;
     if (typeof window === "undefined") return;
@@ -1388,11 +1407,27 @@ export default function MeetingRoom() {
       (window as Window & typeof globalThis & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!AudioCtx) return;
 
-    const ctx = new AudioCtx();
-    const cleanupFns: Array<() => void> = [];
+    if (!audioContextRef.current || audioContextRef.current.state === "closed") {
+      audioContextRef.current = new AudioCtx();
+    }
+    const ctx = audioContextRef.current;
 
-    const monitorStream = (id: string, stream?: MediaStream | null) => {
-      if (!stream || stream.getAudioTracks().length === 0) return;
+    const ensureMonitor = (id: string, stream?: MediaStream | null) => {
+      const signature = getStreamTrackSignature(stream);
+      const monitorKey = `${id}:${signature}`;
+
+      if (audioMonitorKeysRef.current.get(id) === monitorKey) {
+        return;
+      }
+
+      audioMonitorsRef.current.get(id)?.();
+      audioMonitorsRef.current.delete(id);
+      audioMonitorKeysRef.current.delete(id);
+
+      if (!stream || stream.getAudioTracks().length === 0 || !signature) {
+        delete audioLevelsRef.current[id];
+        return;
+      }
 
       const source = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
@@ -1404,11 +1439,10 @@ export default function MeetingRoom() {
         analyser.getByteFrequencyData(data);
         let sum = 0;
         for (let i = 0; i < data.length; i += 1) sum += data[i];
-        const level = sum / data.length / 255;
-        audioLevelsRef.current[id] = level;
+        audioLevelsRef.current[id] = sum / data.length / 255;
       }, 220);
 
-      cleanupFns.push(() => {
+      audioMonitorsRef.current.set(id, () => {
         window.clearInterval(timer);
         try {
           source.disconnect();
@@ -1418,10 +1452,30 @@ export default function MeetingRoom() {
         }
         delete audioLevelsRef.current[id];
       });
+      audioMonitorKeysRef.current.set(id, monitorKey);
     };
 
-    monitorStream("local", localStreamRef.current);
-    participants.forEach((p) => monitorStream(p.socketId, p.stream));
+    const syncMonitors = () => {
+      const activeIds = new Set<string>(["local"]);
+      participantsRef.current.forEach((participant) => {
+        activeIds.add(participant.socketId);
+      });
+
+      for (const [id, cleanup] of audioMonitorsRef.current.entries()) {
+        if (!activeIds.has(id)) {
+          cleanup();
+          audioMonitorsRef.current.delete(id);
+        }
+      }
+
+      ensureMonitor("local", localStreamRef.current);
+      participantsRef.current.forEach((participant) => {
+        ensureMonitor(participant.socketId, participant.stream);
+      });
+    };
+
+    syncMonitors();
+    const syncTimer = window.setInterval(syncMonitors, 800);
 
     const activeTimer = window.setInterval(() => {
       let maxId: string | null = null;
@@ -1432,15 +1486,30 @@ export default function MeetingRoom() {
           maxId = id;
         }
       });
-      setActiveSpeakerId(maxId);
+      if (maxId !== activeSpeakerRef.current) {
+        activeSpeakerRef.current = maxId;
+        setActiveSpeakerId(maxId);
+      }
     }, 320);
-    cleanupFns.push(() => window.clearInterval(activeTimer));
 
     return () => {
-      cleanupFns.forEach((fn) => fn());
-      void ctx.close().catch(() => { });
+      window.clearInterval(syncTimer);
+      window.clearInterval(activeTimer);
     };
-  }, [participants, meetingState]);
+  }, [meetingState]);
+
+  useEffect(() => {
+    if (meetingState !== "inMeeting") {
+      audioMonitorsRef.current.forEach((cleanup) => cleanup());
+      audioMonitorsRef.current.clear();
+      audioMonitorKeysRef.current.clear();
+      activeSpeakerRef.current = null;
+      if (audioContextRef.current) {
+        void audioContextRef.current.close().catch(() => { });
+        audioContextRef.current = null;
+      }
+    }
+  }, [meetingState]);
 
   // Cleanup on page close
   useEffect(() => {

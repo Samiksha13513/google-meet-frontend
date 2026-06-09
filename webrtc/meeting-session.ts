@@ -1,7 +1,7 @@
 import type { Socket } from "socket.io-client";
 import { PEER_CONNECTION_CONFIG } from "./config";
 import { isScreenTrackAlive } from "./screen-share";
-import { stopMediaStream } from "./stream-utils";
+import { getStreamTrackSignature, stopMediaStream } from "./stream-utils";
 
 type MeetingMember = {
   socketId: string;
@@ -92,6 +92,11 @@ export class MeetingPeerSession {
   private peerDisconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private screenShareMonitorTimer: ReturnType<typeof setInterval> | null = null;
   private isStoppingScreenShare = false;
+  private remoteStreamSignatures = new Map<string, string>();
+  private streamCompositionListeners = new Set<string>();
+  private pendingOffers = new Set<string>();
+  private offerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private offerFlushResolvers: Array<() => void> = [];
 
   constructor(
     private readonly roomId: string,
@@ -190,11 +195,12 @@ export class MeetingPeerSession {
         } else if (outboundTrack) {
           peer.addTrack(outboundTrack, activeScreenTrack ? this.screenShareStream! : this.localStream);
         }
-        await this.sendOffer(socketId);
+        this.scheduleOffer(socketId);
       } catch (err) {
         console.error(`[WebRTC:Mesh] ${kind} device replaceTrack failed for ${socketId}:`, err);
       }
     }
+    await this.flushPendingOffers();
 
     if (oldTrack && oldTrack !== track) {
       oldTrack.stop();
@@ -231,11 +237,12 @@ export class MeetingPeerSession {
             peer.addTrack(screenAudioTrack, stream);
           }
         }
-        await this.sendOffer(socketId);
+        this.scheduleOffer(socketId);
       } catch (err) {
         console.error(`[WebRTC:Mesh] Screen share replaceTrack failed for ${socketId}:`, err);
       }
     }
+    await this.flushPendingOffers();
 
     this.socket.emit("screen-share-started", { roomId: this.roomId });
     this.startScreenShareMonitor();
@@ -279,11 +286,12 @@ export class MeetingPeerSession {
         if (audioSender && this.localMicAudioTrack) {
           await audioSender.replaceTrack(this.localMicAudioTrack);
         }
-        await this.sendOffer(socketId);
+        this.scheduleOffer(socketId);
       } catch (err) {
         console.error(`[WebRTC:Mesh] Restore camera after screen share failed for ${socketId}:`, err);
       }
     }
+    await this.flushPendingOffers();
 
     this.screenShareStream = null;
     this.socket.emit("screen-share-stopped", { roomId: this.roomId });
@@ -302,13 +310,13 @@ export class MeetingPeerSession {
         const videoSender = peer.getSenders().find((s) => s.track?.kind === "video");
         if (videoSender && videoSender.track?.id !== screenTrack.id) {
           await videoSender.replaceTrack(screenTrack);
-          await this.sendOffer(socketId);
+          this.scheduleOffer(socketId);
         }
         if (screenAudioTrack) {
           const audioSender = peer.getSenders().find((s) => s.track?.kind === "audio");
           if (audioSender && audioSender.track?.id !== screenAudioTrack.id) {
             await audioSender.replaceTrack(screenAudioTrack);
-            await this.sendOffer(socketId);
+            this.scheduleOffer(socketId);
           }
         }
       } catch (err) {
@@ -340,6 +348,7 @@ export class MeetingPeerSession {
       return;
     }
     await this.applyScreenShareToAllPeers();
+    await this.flushPendingOffers();
   }
 
   // Host approval and removal triggers
@@ -408,6 +417,40 @@ export class MeetingPeerSession {
     this.remoteDetails.clear();
     this.pendingRemoteIce.clear();
     this.peerCleanupHandlers.clear();
+    this.remoteStreamSignatures.clear();
+    this.streamCompositionListeners.clear();
+    this.clearPendingOffers();
+  }
+
+  private scheduleOffer(targetId: string): void {
+    this.pendingOffers.add(targetId);
+    if (this.offerDebounceTimer) return;
+    this.offerDebounceTimer = setTimeout(() => {
+      void this.flushPendingOffers();
+    }, 80);
+  }
+
+  private async flushPendingOffers(): Promise<void> {
+    if (this.offerDebounceTimer) {
+      clearTimeout(this.offerDebounceTimer);
+      this.offerDebounceTimer = null;
+    }
+    const targets = [...this.pendingOffers];
+    this.pendingOffers.clear();
+    await Promise.all(targets.map((id) => this.sendOffer(id)));
+    const resolvers = this.offerFlushResolvers.splice(0);
+    for (const resolve of resolvers) {
+      resolve();
+    }
+  }
+
+  private clearPendingOffers(): void {
+    if (this.offerDebounceTimer) {
+      clearTimeout(this.offerDebounceTimer);
+      this.offerDebounceTimer = null;
+    }
+    this.pendingOffers.clear();
+    this.offerFlushResolvers.splice(0).forEach((resolve) => resolve());
   }
 
   private getOrCreatePeer(socketId: string, displayName: string): RTCPeerConnection {
@@ -424,18 +467,30 @@ export class MeetingPeerSession {
     this.peers.set(socketId, peer);
     this.remoteDisplayNames.set(socketId, displayName);
 
-    const emitRemoteStream = () => {
+    const emitRemoteStreamIfChanged = () => {
       const stream = this.remoteStreams.get(socketId);
       if (!stream) return;
-      // Always construct a fresh wrapper MediaStream instance so the React frontend
-      // is forced to detect the change and re-evaluate track/video elements
-      const unifiedStream = new MediaStream(stream.getTracks());
+      const signature = getStreamTrackSignature(stream);
+      if (this.remoteStreamSignatures.get(socketId) === signature) return;
+      this.remoteStreamSignatures.set(socketId, signature);
       this.callbacks.onRemoteStreamAdded(
         socketId,
-        unifiedStream,
+        stream,
         displayName,
         this.remoteDetails.get(socketId)
       );
+    };
+
+    const bindStreamCompositionListeners = (stream: MediaStream) => {
+      if (this.streamCompositionListeners.has(socketId)) return;
+      this.streamCompositionListeners.add(socketId);
+      stream.addEventListener("addtrack", emitRemoteStreamIfChanged);
+      stream.addEventListener("removetrack", emitRemoteStreamIfChanged);
+      this.addPeerCleanup(socketId, () => {
+        stream.removeEventListener("addtrack", emitRemoteStreamIfChanged);
+        stream.removeEventListener("removetrack", emitRemoteStreamIfChanged);
+        this.streamCompositionListeners.delete(socketId);
+      });
     };
 
     // Bind WebRTC track events
@@ -449,19 +504,16 @@ export class MeetingPeerSession {
         }
       }
       this.remoteStreams.set(socketId, stream);
+      bindStreamCompositionListeners(stream);
 
       const track = event.track;
-      const onTrackChange = () => emitRemoteStream();
-      track.addEventListener("ended", onTrackChange);
-      track.addEventListener("mute", onTrackChange);
-      track.addEventListener("unmute", onTrackChange);
+      const onTrackCompositionChange = () => emitRemoteStreamIfChanged();
+      track.addEventListener("ended", onTrackCompositionChange);
       this.addPeerCleanup(socketId, () => {
-        track.removeEventListener("ended", onTrackChange);
-        track.removeEventListener("mute", onTrackChange);
-        track.removeEventListener("unmute", onTrackChange);
+        track.removeEventListener("ended", onTrackCompositionChange);
       });
 
-      emitRemoteStream();
+      emitRemoteStreamIfChanged();
     };
 
     // ICE trickle
@@ -672,6 +724,7 @@ export class MeetingPeerSession {
     const remoteStream = this.remoteStreams.get(socketId);
     stopMediaStream(remoteStream);
     this.remoteStreams.delete(socketId);
+    this.remoteStreamSignatures.delete(socketId);
 
     const peer = this.peers.get(socketId);
     if (peer) {
@@ -692,7 +745,8 @@ export class MeetingPeerSession {
 
   private async sendOffer(targetId: string): Promise<void> {
     const peer = this.peers.get(targetId);
-    if (!peer) return;
+    if (!peer || peer.connectionState === "closed") return;
+    if (peer.signalingState !== "stable") return;
 
     try {
       const offer = await peer.createOffer({
