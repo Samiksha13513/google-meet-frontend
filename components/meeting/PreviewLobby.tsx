@@ -4,9 +4,6 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import {
   ChevronDown,
-  Copy,
-  Check,
-  Image as ImageIcon,
   Mic,
   MicOff,
   MoreHorizontal,
@@ -14,8 +11,6 @@ import {
   Video,
   VideoOff,
   Volume2,
-  Wand2,
-  Settings2,
 } from "lucide-react";
 
 import { getDisplayInitial } from "@/lib/display-name";
@@ -26,7 +21,6 @@ import { useMeetingStore } from "@/store/meeting-store";
 import { socket } from "@/lib/socket";
 
 type PreviewLobbyProps = {
-  meetingCode: string;
   displayName: string;
   email?: string;
   image?: string;
@@ -38,7 +32,6 @@ type PreviewLobbyProps = {
   onToggleMic: () => void;
   onToggleCamera: () => void;
   onJoinNow: () => void;
-  onPresentNow?: () => void;
   audioInputDevices: MediaDeviceInfo[];
   audioOutputDevices: MediaDeviceInfo[];
   videoInputDevices: MediaDeviceInfo[];
@@ -51,8 +44,6 @@ type PreviewLobbyProps = {
   isAuthenticated: boolean;
   customDisplayName: string;
   onCustomDisplayNameChange: (name: string) => void;
-  isHostPreview?: boolean;
-  meetingTitle?: string;
 };
 
 type DeviceSelectorProps = {
@@ -65,7 +56,6 @@ type DeviceSelectorProps = {
   openMenu: string | null;
   setOpenMenu: (menu: string | null) => void;
   onSelectDevice: (deviceId: string) => void;
-  variant: "light" | "dark";
 };
 
 const deviceLabel = (device: MediaDeviceInfo, index: number, fallback: string) =>
@@ -81,9 +71,7 @@ function DeviceSelector({
   openMenu,
   setOpenMenu,
   onSelectDevice,
-  variant,
 }: DeviceSelectorProps) {
-  const isDark = variant === "dark";
   const selectedDevice = devices.find((device) => device.deviceId === selectedDeviceId);
   const selectedLabel = selectedDevice
     ? deviceLabel(selectedDevice, devices.indexOf(selectedDevice), fallbackLabel)
@@ -96,27 +84,17 @@ function DeviceSelector({
         type="button"
         title={title}
         onClick={() => setOpenMenu(isOpen ? null : id)}
-        className={[
-          "flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border px-4 text-sm transition-colors duration-[180ms]",
-          isDark
-            ? "border-white/20 bg-[#3c4043] text-[#e8eaed] hover:bg-[#4f5357]"
-            : "border-[#dadce0] text-[#3c4043] hover:bg-[#f8fafd]",
-        ].join(" ")}
+        className="flex h-8 min-w-[150px] items-center justify-between gap-3 rounded-full border border-[#dadce0] bg-white px-4 text-sm text-[#3c4043] transition-colors duration-[180ms] hover:bg-[#f8fafd]"
       >
         <span className="flex min-w-0 items-center gap-2">
           {icon}
           <span className="max-w-[108px] truncate">{selectedLabel}</span>
         </span>
-        <ChevronDown className="h-4 w-4 shrink-0 opacity-70" />
+        <ChevronDown className="h-4 w-4 shrink-0 text-[#5f6368]" />
       </button>
 
       {isOpen && (
-        <div
-          className={[
-            "absolute left-1/2 top-10 z-50 w-64 -translate-x-1/2 p-1 text-left",
-            isDark ? "meet-device-dropdown-dark" : "meet-device-dropdown-light",
-          ].join(" ")}
-        >
+        <div className="meet-device-dropdown-light absolute left-1/2 top-10 z-50 w-64 -translate-x-1/2 p-1 text-left">
           {devices.length > 0 ? (
             devices.map((device, index) => (
               <button
@@ -128,13 +106,9 @@ function DeviceSelector({
                 }}
                 className={[
                   "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors duration-[180ms]",
-                  isDark
-                    ? device.deviceId === selectedDeviceId
-                      ? "bg-[#8ab4f8] text-[#202124]"
-                      : "text-[#e8eaed] hover:bg-white/10"
-                    : device.deviceId === selectedDeviceId
-                      ? "bg-[#e8f0fe] text-[#1a73e8]"
-                      : "text-[#202124] hover:bg-[#f8fafd]",
+                  device.deviceId === selectedDeviceId
+                    ? "bg-[#e8f0fe] text-[#1a73e8]"
+                    : "text-[#202124] hover:bg-[#f8fafd]",
                 ].join(" ")}
                 title={deviceLabel(device, index, fallbackLabel)}
               >
@@ -144,11 +118,35 @@ function DeviceSelector({
               </button>
             ))
           ) : (
-            <div className={`px-3 py-2 text-sm ${isDark ? "text-white/55" : "text-[#5f6368]"}`}>
-              No devices found
-            </div>
+            <div className="px-3 py-2 text-sm text-[#5f6368]">No devices found</div>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ParticipantAvatar({
+  name,
+  image,
+  size = "sm",
+}: {
+  name: string;
+  image?: string;
+  size?: "sm" | "md";
+}) {
+  const initial = getDisplayInitial(name);
+  const sizeClass = size === "sm" ? "h-6 w-6 text-[11px]" : "h-9 w-9 text-base";
+
+  return (
+    <div
+      className={`${sizeClass} shrink-0 overflow-hidden rounded-full bg-[#8e24aa] font-medium text-white flex items-center justify-center`}
+    >
+      {image ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={image} alt={name} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+      ) : (
+        initial
       )}
     </div>
   );
@@ -159,19 +157,23 @@ function PreviewControls({
   isCameraOn,
   onToggleMic,
   onToggleCamera,
-  showAudioSettings,
-  onToggleAudioSettings,
 }: {
   isMicOn: boolean;
   isCameraOn: boolean;
   onToggleMic: () => void;
   onToggleCamera: () => void;
-  showAudioSettings: boolean;
-  onToggleAudioSettings: () => void;
 }) {
   return (
     <>
-      <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3">
+      <button
+        type="button"
+        title="More controls"
+        className="absolute bottom-4 left-4 flex h-7 w-7 items-center justify-center rounded-full bg-[#8ab4f8] text-[#202124] transition-colors duration-[180ms] hover:bg-[#aecbfa]"
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+
+      <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4">
         <button
           type="button"
           onClick={onToggleMic}
@@ -195,49 +197,20 @@ function PreviewControls({
         >
           {isCameraOn ? <Video className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
         </button>
-
-        <button
-          type="button"
-          title="Apply background blur"
-          className="meet-lobby-control meet-lobby-control-on h-12 w-12"
-        >
-          <Wand2 className="h-5 w-5" />
-        </button>
-
-        <button
-          type="button"
-          title="Apply visual effects"
-          className="meet-lobby-control meet-lobby-control-on h-12 w-12"
-        >
-          <Sparkles className="h-5 w-5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleAudioSettings}
-          title="Audio settings"
-          className={[
-            "meet-lobby-control meet-lobby-control-on h-12 w-12",
-            showAudioSettings ? "bg-white/20" : "",
-          ].join(" ")}
-        >
-          <Settings2 className="h-5 w-5" />
-        </button>
       </div>
 
       <button
         type="button"
         title="Apply visual effects"
-        className="meet-lobby-control meet-lobby-control-on absolute bottom-4 right-4 h-12 w-12 md:hidden"
+        className="meet-lobby-control meet-lobby-control-on absolute bottom-4 right-4 h-12 w-12"
       >
-        <ImageIcon className="h-5 w-5" />
+        <Sparkles className="h-5 w-5" />
       </button>
     </>
   );
 }
 
 export function PreviewLobby({
-  meetingCode,
   displayName,
   email,
   image,
@@ -249,7 +222,6 @@ export function PreviewLobby({
   onToggleMic,
   onToggleCamera,
   onJoinNow,
-  onPresentNow,
   audioInputDevices,
   audioOutputDevices,
   videoInputDevices,
@@ -262,14 +234,10 @@ export function PreviewLobby({
   isAuthenticated,
   customDisplayName,
   onCustomDisplayNameChange,
-  isHostPreview = false,
-  meetingTitle,
 }: PreviewLobbyProps) {
   const label = displayName || (isAuthenticated ? "Signed-in user" : "Guest");
   const initial = getDisplayInitial(label);
   const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
-  const [showAudioSettings, setShowAudioSettings] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
   const participants = useMeetingStore((s) => s.participants || []);
 
   const others = participants.filter((p) => {
@@ -295,25 +263,10 @@ export function PreviewLobby({
     return `${others.length + 1} people in call`;
   };
 
-  const handleCopyLink = async () => {
-    const link = `${window.location.origin}/meeting/${meetingCode}`;
-    try {
-      await navigator.clipboard.writeText(link);
-      setLinkCopied(true);
-      window.setTimeout(() => setLinkCopied(false), 2000);
-    } catch {
-      // no-op
-    }
-  };
-
-  const formattedCode = meetingCode.includes("-")
-    ? meetingCode
-    : meetingCode.replace(/^(.{3})(.{4})(.{3})$/, "$1-$2-$3") || meetingCode;
-
-  const deviceVariant = isHostPreview ? "dark" : "light";
-  const canJoin = isHostPreview
+  const isReadyToJoin = isAuthenticated;
+  const canJoin = isReadyToJoin
     ? !isJoining && !mediaError
-    : !isJoining && !mediaError && (isAuthenticated || customDisplayName.trim());
+    : !isJoining && !mediaError && Boolean(customDisplayName.trim());
 
   const previewCard = (
     <div className="relative aspect-video w-full overflow-hidden meet-video-box bg-[#3c4043]">
@@ -357,7 +310,7 @@ export function PreviewLobby({
       <button
         type="button"
         title="More options"
-        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-white transition-colors duration-[180ms] hover:bg-white/15 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8ab4f8]"
+        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-white transition-colors duration-[180ms] hover:bg-white/15"
       >
         <MoreHorizontal className="h-5 w-5 rotate-90" />
       </button>
@@ -367,8 +320,6 @@ export function PreviewLobby({
         isCameraOn={isCameraOn}
         onToggleMic={onToggleMic}
         onToggleCamera={onToggleCamera}
-        showAudioSettings={showAudioSettings}
-        onToggleAudioSettings={() => setShowAudioSettings((prev) => !prev)}
       />
     </div>
   );
@@ -385,7 +336,6 @@ export function PreviewLobby({
         openMenu={openDeviceMenu}
         setOpenMenu={setOpenDeviceMenu}
         onSelectDevice={onSelectAudioInput}
-        variant={deviceVariant}
       />
       <DeviceSelector
         id="speaker"
@@ -397,7 +347,6 @@ export function PreviewLobby({
         openMenu={openDeviceMenu}
         setOpenMenu={setOpenDeviceMenu}
         onSelectDevice={onSelectAudioOutput}
-        variant={deviceVariant}
       />
       <DeviceSelector
         id="camera"
@@ -409,111 +358,13 @@ export function PreviewLobby({
         openMenu={openDeviceMenu}
         setOpenMenu={setOpenDeviceMenu}
         onSelectDevice={onSelectVideoInput}
-        variant={deviceVariant}
       />
     </div>
   );
 
-  if (isHostPreview) {
-    return (
-      <div className="fixed inset-0 flex flex-col bg-[#202124] text-white">
-        <header className="flex h-16 items-center justify-between px-3 sm:px-6">
-          <Image
-            src={MEET_LOGO_URL}
-            alt="Google Meet"
-            width={99}
-            height={32}
-            className="h-8 w-[99px] object-contain brightness-0 invert"
-            priority
-          />
-          <div className="flex items-center gap-3">
-            <div className="hidden text-right text-xs leading-tight text-[#e8eaed] sm:block">
-              {email && <p>{email}</p>}
-              <p className="text-[#9aa0a6]">Meeting host</p>
-            </div>
-            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#8ab4f8] text-base font-medium text-[#202124]">
-              {image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={image} alt={label} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                initial
-              )}
-            </div>
-          </div>
-        </header>
-
-        <main className="flex flex-1 flex-col items-center justify-center gap-8 px-4 pb-8 pt-2 lg:flex-row lg:gap-16 lg:px-10">
-          <section className="w-full max-w-[720px]">
-            {previewCard}
-            {deviceSelectors}
-          </section>
-
-          <section className="flex w-full max-w-[380px] flex-col items-start text-left">
-            <p className="text-xs font-medium uppercase tracking-wide text-[#9aa0a6]">
-              Ready to join?
-            </p>
-            <h1 className="mt-2 text-[28px] font-normal leading-9 text-white sm:text-[32px] sm:leading-10">
-              {meetingTitle || "Your meeting"}
-            </h1>
-
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <span className="font-mono text-sm tracking-wider text-[#8ab4f8]">
-                {formattedCode || meetingCode}
-              </span>
-              <button
-                type="button"
-                onClick={() => void handleCopyLink()}
-                className="meet-control-btn meet-control-btn-neutral h-8 gap-1.5 px-3 text-xs font-medium"
-              >
-                {linkCopied ? (
-                  <>
-                    <Check className="h-3.5 w-3.5" />
-                    Copied
-                  </>
-                ) : (
-                  <>
-                    <Copy className="h-3.5 w-3.5" />
-                    Copy link
-                  </>
-                )}
-              </button>
-            </div>
-
-            <p className="mt-3 text-sm text-[#9aa0a6]">{participantStatusText()}</p>
-
-            <div className="mt-8 flex w-full flex-col gap-3 sm:flex-row">
-              <button
-                type="button"
-                onClick={onJoinNow}
-                disabled={!canJoin}
-                className="meet-join-now-btn flex flex-1 items-center justify-center px-6 disabled:opacity-55"
-              >
-                {isJoining ? "Joining..." : "Join now"}
-              </button>
-              {onPresentNow && (
-                <button
-                  type="button"
-                  onClick={onPresentNow}
-                  disabled={!canJoin}
-                  className="meet-present-btn flex flex-1 items-center justify-center px-6 disabled:opacity-55"
-                >
-                  Present now
-                </button>
-              )}
-            </div>
-
-            {mediaError && (
-              <p className="mt-4 w-full text-sm text-[#f28b82]">{mediaError}</p>
-            )}
-          </section>
-        </main>
-      </div>
-    );
-  }
-
   return (
     <div className="fixed inset-0 flex flex-col bg-white text-[#202124]">
-      <header className="flex h-16 items-center justify-between px-3 sm:px-6">
+      <header className="flex h-16 shrink-0 items-center justify-between px-3 sm:px-6">
         <Image
           src={MEET_LOGO_URL}
           alt="Google Meet"
@@ -555,42 +406,87 @@ export function PreviewLobby({
         </section>
 
         <section className="flex w-full max-w-[360px] flex-col items-start text-left">
-          <p className="text-sm text-[#5f6368]">{participantStatusText()}</p>
-          <h1 className="meet-guest-heading mt-2">What&apos;s your name?</h1>
+          {isReadyToJoin ? (
+            <>
+              {/* Screenshot 1 (host) & Screenshot 3 (signed-in participant) */}
+              <h1 className="meet-guest-heading">Ready to join?</h1>
 
-          <div className="mt-6 w-full max-w-sm">
-            <input
-              id="displayNameInput"
-              type="text"
-              value={customDisplayName}
-              onChange={(e) => onCustomDisplayNameChange(e.target.value)}
-              placeholder="Your name"
-              className="meet-guest-input w-full"
-              maxLength={60}
-            />
-            <div className="mt-2 text-right text-xs text-[#5f6368]">{customDisplayName.length}/60</div>
+              {others.length > 0 ? (
+                <div className="mt-4 flex items-center gap-2">
+                  <ParticipantAvatar
+                    name={others[0].displayName || "Participant"}
+                    image={(others[0] as { image?: string }).image}
+                    size="sm"
+                  />
+                  <span className="text-sm text-[#5f6368]">{participantStatusText()}</span>
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-[#5f6368]">{participantStatusText()}</p>
+              )}
 
-            <button
-              type="button"
-              onClick={onJoinNow}
-              disabled={!canJoin}
-              className={`mt-8 w-full meet-ask-btn transition-colors duration-[180ms] ${customDisplayName.trim() ? "enabled" : ""}`}
-            >
-              {isJoining ? "Joining..." : "Ask to join"}
-            </button>
+              <button
+                type="button"
+                onClick={onJoinNow}
+                disabled={!canJoin}
+                className="meet-join-now-btn mt-8 w-full max-w-sm disabled:opacity-55"
+              >
+                {isJoining ? "Joining..." : "Join now"}
+              </button>
 
-            <button type="button" className="mt-4 w-full meet-other-btn transition-colors duration-[180ms] hover:bg-[#f8fafd]">
-              Other ways to join
-            </button>
-          </div>
+              <button
+                type="button"
+                className="meet-other-btn mt-4 flex w-full max-w-sm items-center justify-center gap-1 transition-colors duration-[180ms] hover:bg-[#f8fafd]"
+              >
+                Other ways to join
+                <ChevronDown className="h-4 w-4 text-[#1a73e8]" />
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Screenshot 2 — unauthorized guest */}
+              <h1 className="meet-guest-heading">What&apos;s your name?</h1>
 
-          {mediaError && (
-            <p className="mt-4 w-full text-sm text-[#d93025]">{mediaError}</p>
+              <div className="mt-6 w-full max-w-sm">
+                <input
+                  id="displayNameInput"
+                  type="text"
+                  value={customDisplayName}
+                  onChange={(e) => onCustomDisplayNameChange(e.target.value)}
+                  placeholder="Your name"
+                  className="meet-guest-input w-full"
+                  maxLength={60}
+                />
+                <div className="mt-2 text-right text-xs text-[#5f6368]">
+                  {customDisplayName.length}/60
+                </div>
+
+                <button
+                  type="button"
+                  onClick={onJoinNow}
+                  disabled={!canJoin}
+                  className={`mt-8 w-full meet-ask-btn transition-colors duration-[180ms] ${customDisplayName.trim() ? "enabled" : ""}`}
+                >
+                  {isJoining ? "Joining..." : "Ask to join"}
+                </button>
+
+                <button
+                  type="button"
+                  className="meet-other-btn mt-4 flex w-full items-center justify-center gap-1 transition-colors duration-[180ms] hover:bg-[#f8fafd]"
+                >
+                  Other ways to join
+                  <ChevronDown className="h-4 w-4 text-[#1a73e8]" />
+                </button>
+              </div>
+
+              <p className="mt-6 max-w-sm text-xs leading-relaxed text-[#5f6368]">
+                By joining, you agree to the Terms of Service and Privacy Policy. System info will be sent to confirm you&apos;re not a bot.
+              </p>
+            </>
           )}
 
-          <p className="mt-6 max-w-sm text-xs text-[#5f6368]">
-            By joining, you agree to the Terms of Service and Privacy Policy. System info will be sent to confirm you&apos;re not a bot.
-          </p>
+          {mediaError && (
+            <p className="mt-4 w-full max-w-sm text-sm text-[#d93025]">{mediaError}</p>
+          )}
         </section>
       </main>
     </div>

@@ -400,7 +400,6 @@ export default function MeetingRoom() {
   const videoDeviceMenuRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const meetingJoinedAtRef = useRef<number | null>(null);
-  const pendingPresentOnJoinRef = useRef(false);
   const showChatRef = useRef(false);
   const screenShareUnbindRef = useRef<(() => void) | null>(null);
   const screenShareSupport = typeof window !== "undefined" ? getScreenShareSupport() : null;
@@ -856,11 +855,6 @@ export default function MeetingRoom() {
     setMeetingState("ended");
   };
 
-  const handlePresentNowFromLobby = () => {
-    pendingPresentOnJoinRef.current = true;
-    void handleJoinNow();
-  };
-
   const handleReturnHome = () => {
     router.push("/");
   };
@@ -904,13 +898,6 @@ export default function MeetingRoom() {
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
         meetingJoinedAtRef.current = Date.now();
-
-        if (pendingPresentOnJoinRef.current) {
-          pendingPresentOnJoinRef.current = false;
-          window.setTimeout(() => {
-            void handleToggleScreenShare();
-          }, 600);
-        }
 
         // Add existing members (excluding local user)
         setParticipants(dedupeParticipants(
@@ -1491,34 +1478,9 @@ export default function MeetingRoom() {
     );
   }
 
-  const getStoredUserId = (): string | null => {
-    if (typeof window === "undefined") return null;
-    try {
-      const raw = localStorage.getItem("user");
-      if (raw) {
-        const user = JSON.parse(raw) as { id?: string };
-        if (user.id) return user.id;
-      }
-      const token = localStorage.getItem("authToken");
-      const payload = token?.split(".")[1];
-      if (!payload) return null;
-      const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
-      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
-      const decoded = JSON.parse(atob(padded)) as { id?: string };
-      return decoded.id || null;
-    } catch {
-      return null;
-    }
-  };
-
-  const isMeetingCreator =
-    Boolean(meetingData?.hostId) && getStoredUserId() === meetingData?.hostId;
-
   if (meetingState === "lobby") {
     return (
       <PreviewLobby
-        meetingCode={meetingCode ?? ""}
-        meetingTitle={meetingData?.title || undefined}
         displayName={resolvedDisplayName}
         email={isAuthenticated ? identity.email : undefined}
         image={isAuthenticated ? identity.image : undefined}
@@ -1538,12 +1500,10 @@ export default function MeetingRoom() {
         onSelectAudioOutput={handleSelectAudioOutput}
         onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
         onJoinNow={handleJoinNow}
-        onPresentNow={isMeetingCreator ? handlePresentNowFromLobby : undefined}
         isAuthenticated={isAuthenticated}
         customDisplayName={customDisplayName}
         onCustomDisplayNameChange={setCustomDisplayName}
         isJoining={isJoining}
-        isHostPreview={isMeetingCreator || (isAuthenticated && !meetingData)}
       />
     );
   }
