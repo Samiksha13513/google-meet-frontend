@@ -11,6 +11,7 @@ import { googleLogin } from "@/services/auth";
 import Image from "next/image";
 import { useMeetingStore } from "@/store/meeting-store";
 import { socket } from "@/lib/socket";
+import { div } from "framer-motion/m";
 
 type PreviewLobbyProps = {
   meetingCode: string;
@@ -384,6 +385,7 @@ export function PreviewLobby({
 
           <p className="mt-6 text-xs text-[#5f6368] max-w-sm">By joining, you agree to the Terms of Service and Privacy Policy. System info will be sent to confirm you're not a bot.</p>
         </section>
+
       </main>
     </div>
   );
