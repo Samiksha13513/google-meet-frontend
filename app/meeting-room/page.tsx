@@ -42,6 +42,7 @@ import {
 } from "../../webrtc/screen-share";
 import { detachVideoElement, stopMediaStream } from "../../webrtc/stream-utils";
 import { PreviewLobby } from "@/components/meeting/PreviewLobby";
+import { GuestWaitingLobby } from "@/components/meeting/GuestWaitingLobby";
 import {
   getCurrentUserIdentity,
   getDisplayInitial,
@@ -1509,13 +1510,33 @@ export default function MeetingRoom() {
   }
 
   if (meetingState === "waiting") {
+    if (!isAuthenticated) {
+      return (
+        <GuestWaitingLobby
+          displayName={resolvedDisplayName}
+          videoRef={localVideoRef}
+          isMicOn={isMicOn}
+          isCameraOn={isCameraOn}
+          onToggleMic={handleToggleMic}
+          onToggleCamera={handleToggleCamera}
+          onLeave={handleCancelJoinRequest}
+        />
+      );
+    }
+
     return (
       <div className="fixed inset-0 flex flex-col bg-[#202124] text-white">
-        <header className="flex h-14 items-center px-4 sm:px-6">
-          <span className="font-mono text-sm tracking-wider text-[#8ab4f8]">{meetingCode}</span>
-        </header>
-
         <main className="flex flex-1 flex-col items-center justify-center gap-8 px-4 pb-8">
+          <div className="flex max-w-[520px] items-center justify-center gap-3 text-center">
+            <span
+              className="inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-[#8ab4f8] border-t-transparent"
+              aria-hidden
+            />
+            <p className="text-[15px] leading-6 text-white/90 sm:text-base">
+              Please wait until a meeting host brings you into the call
+            </p>
+          </div>
+
           <div className="relative w-full max-w-md overflow-hidden rounded-xl bg-[#3c4043] aspect-video meet-video-box">
             <video
               ref={localVideoRef}
@@ -1528,29 +1549,15 @@ export default function MeetingRoom() {
               <div className="absolute inset-0 flex items-center justify-center">
                 <MeetAvatar
                   name={resolvedDisplayName}
-                  email={isAuthenticated ? identity.email : undefined}
-                  image={isAuthenticated ? identity.image : undefined}
+                  email={identity.email}
+                  image={identity.image}
                   size="xl"
                 />
               </div>
             )}
-            <div className="absolute left-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-xs">
+            <div className="absolute bottom-2 left-3 truncate text-xs text-white">
               {resolvedDisplayName}
             </div>
-          </div>
-
-          <div className="flex flex-col items-center gap-3 text-center">
-            <div className="relative flex h-16 w-16 items-center justify-center">
-              <div className="absolute inset-0 rounded-full border-2 border-[#8ab4f8] meet-waiting-pulse" />
-              <div className="h-10 w-10 rounded-full bg-[#8ab4f8]/20" />
-            </div>
-            <h1 className="text-2xl font-light sm:text-3xl">Asking to join...</h1>
-            <p className="max-w-sm text-sm leading-relaxed text-white/60">
-              Please wait. The meeting host will let you in shortly.
-            </p>
-            {meetingData?.title && (
-              <p className="text-sm text-white/80">{meetingData.title}</p>
-            )}
           </div>
 
           <button
