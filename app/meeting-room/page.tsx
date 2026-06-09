@@ -24,7 +24,6 @@ import {
   PinOff,
   Captions,
   MoreVertical,
-  Search,
   Lock,
   Wifi,
   WifiOff,
@@ -43,6 +42,8 @@ import {
 import { detachVideoElement, stopMediaStream } from "../../webrtc/stream-utils";
 import { PreviewLobby } from "@/components/meeting/PreviewLobby";
 import { GuestWaitingLobby } from "@/components/meeting/GuestWaitingLobby";
+import { AdmitGuestControl } from "@/components/meeting/AdmitGuestControl";
+import { PeoplePanel } from "@/components/meeting/PeoplePanel";
 import {
   getCurrentUserIdentity,
   getDisplayInitial,
@@ -366,7 +367,6 @@ export default function MeetingRoom() {
   const [chatInput, setChatInput] = useState("");
   const [unreadMessages, setUnreadMessages] = useState(0);
   const [showParticipantsList, setShowParticipantsList] = useState(false);
-  const [showAdmitGuestsDialog, setShowAdmitGuestsDialog] = useState(false);
   const [pinnedParticipantId, setPinnedParticipantId] = useState<string | null>(null);
   const [activeSpeakerId, setActiveSpeakerId] = useState<string | null>(null);
   const [meetingLayout, setMeetingLayout] = useState<MeetingLayout>("auto");
@@ -455,7 +455,6 @@ export default function MeetingRoom() {
     setShowChat(false);
     setUnreadMessages(0);
     setShowParticipantsList(false);
-    setShowAdmitGuestsDialog(false);
     setShowEmojiPicker(false);
     setShowLayoutMenu(false);
     setShowAudioDeviceMenu(false);
@@ -810,23 +809,9 @@ export default function MeetingRoom() {
     setJoinRequests((prev) => prev.filter((r) => r.socketId !== socketId));
   };
 
-  const handleOpenAdmitGuestsDialog = () => {
-    setShowAdmitGuestsDialog(true);
-    setShowParticipantsList(false);
-  };
-
-  const handleAdmitGuestFromDialog = (socketId: string) => {
-    handleAdmit(socketId);
-    if (joinRequests.length <= 1) {
-      setShowAdmitGuestsDialog(false);
-    }
-  };
-
-  const handleDenyGuestFromDialog = (socketId: string) => {
-    handleDeny(socketId);
-    if (joinRequests.length <= 1) {
-      setShowAdmitGuestsDialog(false);
-    }
+  const handleOpenPeoplePanel = () => {
+    setShowParticipantsList(true);
+    setShowChat(false);
   };
 
   const handleKick = (socketId: string) => {
@@ -838,7 +823,6 @@ export default function MeetingRoom() {
       sessionRef.current?.approveJoin(request.socketId);
     });
     setJoinRequests([]);
-    setShowAdmitGuestsDialog(false);
   };
 
   const handleCancelJoinRequest = () => {
@@ -1915,135 +1899,14 @@ export default function MeetingRoom() {
         </div>
       </header>
 
-      {/* Floating Join Request card (Host only) */}
-      {isHost && joinRequests.length > 0 && !showAdmitGuestsDialog && (
-        <div className="absolute right-4 top-16 z-50 w-[min(340px,calc(100vw-32px))] rounded-2xl border border-white/10 bg-[#2d2e30] p-5 shadow-2xl animate-fade-in">
-          <div className="flex flex-col items-center text-center">
-            <MeetAvatar
-              name={joinRequests[0].displayName}
-              email={joinRequests[0].email}
-              image={joinRequests[0].image}
-              size="md"
-            />
-            <p className="mt-3 truncate text-[15px] font-medium text-white">
-              {joinRequests[0].displayName}
-            </p>
-            <p className="mt-1 text-sm text-white/60">
-              {joinRequests.length === 1
-                ? "Wants to join this meeting"
-                : `${joinRequests.length} people want to join`}
-            </p>
-          </div>
-          <div className="mt-5 flex justify-center gap-3">
-            <button
-              type="button"
-              onClick={() => handleDeny(joinRequests[0].socketId)}
-              className="meet-control-btn h-9 px-5 text-sm font-medium text-[#8ab4f8] hover:bg-[#8ab4f8]/10"
-            >
-              Deny
-            </button>
-            <button
-              type="button"
-              onClick={() => handleAdmit(joinRequests[0].socketId)}
-              className="meet-control-btn meet-control-btn-active h-9 px-5 text-sm font-medium"
-            >
-              Admit
-            </button>
-          </div>
-          {joinRequests.length > 1 && (
-            <button
-              type="button"
-              onClick={handleOpenAdmitGuestsDialog}
-              className="mt-3 w-full text-center text-xs text-[#8ab4f8] hover:underline"
-            >
-              View all {joinRequests.length} requests
-            </button>
-          )}
-        </div>
-      )}
-
-      {isHost && showAdmitGuestsDialog && joinRequests.length > 0 && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 px-4 py-6 backdrop-blur-[2px] animate-fade-in">
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="admit-guests-title"
-            className="w-full max-w-[448px] overflow-hidden rounded-[28px] bg-[#f8fafd] text-[#202124] shadow-[0_16px_48px_rgba(0,0,0,0.32)]"
-          >
-            <div className="flex items-center justify-between px-6 pb-2 pt-5">
-              <div className="min-w-0">
-                <h2 id="admit-guests-title" className="text-[22px] font-normal leading-7 tracking-normal">
-                  Admit guests?
-                </h2>
-                <p className="mt-1 text-sm leading-5 text-[#5f6368]">
-                  {joinRequests.length === 1
-                    ? "Someone wants to join this meeting"
-                    : `${joinRequests.length} people want to join this meeting`}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAdmitGuestsDialog(false)}
-                className="ml-4 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[#5f6368] transition-colors hover:bg-[#e8eaed]"
-                aria-label="Close admit guests"
-                title="Close"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="max-h-[min(52vh,360px)] overflow-y-auto px-2 pb-2">
-              {joinRequests.map((request) => (
-                <div
-                  key={request.socketId}
-                  className="mx-2 flex items-center gap-3 rounded-2xl px-4 py-3 transition-colors hover:bg-[#eef3fb]"
-                >
-                  <MeetAvatar
-                    name={request.displayName}
-                    email={request.email}
-                    image={request.image}
-                    size="md"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[15px] font-medium leading-5 text-[#202124]">
-                      {request.displayName}
-                    </p>
-                    <p className="truncate text-[13px] leading-5 text-[#5f6368]">
-                      {request.email || "Guest"}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex flex-col-reverse gap-2 border-t border-[#e8eaed] px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-              {joinRequests.length > 1 && (
-                <button
-                  type="button"
-                  onClick={handleAdmitAll}
-                  className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe] sm:mr-auto"
-                >
-                  Admit all
-                </button>
-              )}
-              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button
-                  type="button"
-                  onClick={() => handleDenyGuestFromDialog(joinRequests[0].socketId)}
-                  className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
-                >
-                  Deny entry
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleAdmitGuestFromDialog(joinRequests[0].socketId)}
-                  className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#1765cc]"
-                >
-                  Admit
-                </button>
-              </div>
-            </div>
-          </section>
+      {isHost && joinRequests.length > 0 && (
+        <div className="absolute right-4 top-14 z-[60]">
+          <AdmitGuestControl
+            requests={joinRequests}
+            onAdmit={handleAdmit}
+            onDeny={handleDeny}
+            onOpenPeoplePanel={handleOpenPeoplePanel}
+          />
         </div>
       )}
 
@@ -2494,111 +2357,27 @@ export default function MeetingRoom() {
           </div>
         )}
 
-        {/* Right Sidebar - Participants list */}
+        {/* Right Sidebar - People panel */}
         {showParticipantsList && (
-          <div className="fixed inset-0 z-50 md:static md:inset-auto w-full md:w-96 bg-[#2d2e30]/95 backdrop-blur md:bg-[#2d2e30] md:backdrop-blur-0 md:rounded-2xl flex flex-col border border-white/10 shadow-2xl animate-slide-in">
-            <div className="p-4 border-b border-white/10 flex justify-between items-center">
-              <h2 className="font-medium text-sm flex items-center gap-2">
-                <Users className="h-4 w-4 text-[#8ab4f8]" /> People ({totalConferencingUsers})
-              </h2>
-              <button
-                onClick={() => setShowParticipantsList(false)}
-                className="h-8 w-8 rounded-full hover:bg-white/10 flex items-center justify-center transition-colors"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="border-b border-white/10 px-4 py-3">
-              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-[#202124] px-3 py-2">
-                <Search className="h-4 w-4 shrink-0 text-white/45" />
-                <input
-                  type="text"
-                  value={participantSearch}
-                  onChange={(e) => setParticipantSearch(e.target.value)}
-                  placeholder="Search participants"
-                  className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/40"
-                />
-              </div>
-            </div>
-            <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
-              {/* Local member details row */}
-              <div className="flex justify-between items-center p-3 rounded-xl bg-white/5 border border-white/5">
-                <div className="flex items-center gap-3">
-                  <MeetAvatar
-                    name={resolvedDisplayName}
-                    email={isAuthenticated ? identity.email : undefined}
-                    image={isAuthenticated ? identity.image : undefined}
-                    size="sm"
-                  />
-                  <div className="min-w-0">
-                    <h4 className="truncate text-sm font-medium">{resolvedDisplayName} (You)</h4>
-                    <span className="block truncate text-[10px] text-white/50">
-                      {(isAuthenticated && displaySecondary) || (isHost ? "Meeting host" : "In the meeting")}
-                    </span>
-                    {isHost && (
-                      <span className="mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium text-yellow-300 bg-yellow-400/10">
-                        Host
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="flex gap-2 text-white/60">
-                  {isHandRaised && <Hand className="h-4 w-4 text-yellow-300" />}
-                  {isMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
-                  {isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
-                </div>
-              </div>
-
-              {/* Remote members list */}
-              {filteredParticipants.map((p) => (
-                <div key={p.socketId} className="flex justify-between items-center p-3 rounded-xl hover:bg-white/5 transition-colors">
-                  <div className="flex items-center gap-3">
-                    <MeetAvatar
-                      name={p.displayName}
-                      email={p.email}
-                      image={p.image}
-                      size="sm"
-                    />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h4 className="truncate text-sm font-medium">{p.displayName}</h4>
-                        {reactionBubbles[p.socketId]?.[0] ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-white/90">
-                            <span>{reactionBubbles[p.socketId][0].emoji}</span>
-                            <span>{reactionBubbles[p.socketId][0].senderName}</span>
-                          </span>
-                        ) : null}
-                      </div>
-                      <span className="block truncate text-[10px] text-white/50">
-                        {p.email || "In the meeting"}
-                      </span>
-                      {p.isHost && (
-                        <span className="mt-1 inline-flex rounded px-1.5 py-0.5 text-[10px] font-medium text-yellow-300 bg-yellow-400/10">
-                          Host
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex gap-3 items-center">
-                    <div className="flex gap-2 text-white/40">
-                      {p.isHandRaised && <Hand className="h-4 w-4 text-yellow-300" />}
-                      {p.isMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
-                      {p.isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
-                    </div>
-                    {isHost && (
-                      <button
-                        onClick={() => handleKick(p.socketId)}
-                        className="h-8 w-8 rounded-full hover:bg-red-500/20 hover:text-red-400 flex items-center justify-center transition-colors"
-                        title="Remove participant"
-                      >
-                        <UserX className="h-4 w-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+          <PeoplePanel
+            isHost={isHost}
+            localName={resolvedDisplayName}
+            localEmail={isAuthenticated ? identity.email : undefined}
+            localImage={isAuthenticated ? identity.image : undefined}
+            isLocalMicOn={isMicOn}
+            isLocalCameraOn={isCameraOn}
+            isLocalHandRaised={isHandRaised}
+            isLocalActiveSpeaker={activeSpeakerId === "local"}
+            joinRequests={joinRequests}
+            participants={filteredParticipants}
+            searchQuery={participantSearch}
+            onSearchChange={setParticipantSearch}
+            onClose={() => setShowParticipantsList(false)}
+            onAdmit={handleAdmit}
+            onDeny={handleDeny}
+            onAdmitAll={handleAdmitAll}
+            onRemove={isHost ? handleKick : undefined}
+          />
         )}
       </div>
 
