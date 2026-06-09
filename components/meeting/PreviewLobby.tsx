@@ -384,27 +384,6 @@ export function PreviewLobby({
 
           <p className="mt-6 text-xs text-[#5f6368] max-w-sm">By joining, you agree to the Terms of Service and Privacy Policy. System info will be sent to confirm you're not a bot.</p>
         </section>
-
-          {mediaError && (
-            <p className="mt-4 w-full text-sm text-[#d93025]">{mediaError}</p>
-          )}
-
-          <Button
-            onClick={onJoinNow}
-            disabled={isJoining || !!mediaError || (!isAuthenticated && !customDisplayName.trim())}
-            className="mt-7 h-14 w-full max-w-[228px] rounded-full bg-[#0b57d0] text-sm font-medium text-white ring-2 ring-[#0b57d0] ring-offset-2 ring-offset-white hover:bg-[#0842a0] disabled:opacity-50"
-          >
-            {isJoining ? "Joining..." : "Join now"}
-          </Button>
-
-          <button
-            type="button"
-            className="mt-7 flex h-9 items-center gap-3 rounded-full border border-[#dadce0] px-5 text-sm font-medium text-[#0b57d0] hover:bg-[#f8fafd]"
-          >
-            Other ways to join
-            <ChevronDown className="h-4 w-4" />
-          </button>
-        </section>
       </main>
     </div>
   );
