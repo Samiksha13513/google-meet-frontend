@@ -22,6 +22,13 @@ import {
   Rows3,
   Pin,
   PinOff,
+  Captions,
+  MoreVertical,
+  Search,
+  Lock,
+  Wifi,
+  WifiOff,
+  Sparkles,
 } from "lucide-react";
 
 import { useParams, useRouter } from "next/navigation";
@@ -43,8 +50,9 @@ import {
   type UserIdentity,
 } from "@/lib/display-name";
 import { getMeetingByCode } from "@/lib/api";
+import type { Meeting } from "@/types/meeting";
 
-const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮", "👎"];
+const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮"];
 const DEVICE_PREFERENCES_KEY = "meet-device-preferences";
 
 type MeetingState =
@@ -336,7 +344,14 @@ export default function MeetingRoom() {
   const [deniedReason, setDeniedReason] = useState("Host denied your request");
 
   const [currentTime, setCurrentTime] = useState("");
-  const [, setParticipantLeftMessage] = useState<string | null>(null);
+  const [participantLeftMessage, setParticipantLeftMessage] = useState<string | null>(null);
+  const [meetingData, setMeetingData] = useState<Meeting | null>(null);
+  const [meetingDuration, setMeetingDuration] = useState("0:00");
+  const [showLeaveDialog, setShowLeaveDialog] = useState(false);
+  const [showMoreOptionsMenu, setShowMoreOptionsMenu] = useState(false);
+  const [isMeetingLocked, setIsMeetingLocked] = useState(false);
+  const [participantSearch, setParticipantSearch] = useState("");
+  const [isOnline, setIsOnline] = useState(true);
 
   // Active participants list
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -380,9 +395,12 @@ export default function MeetingRoom() {
 
   const emojiRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
+  const moreOptionsRef = useRef<HTMLDivElement>(null);
   const audioDeviceMenuRef = useRef<HTMLDivElement>(null);
   const videoDeviceMenuRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const meetingJoinedAtRef = useRef<number | null>(null);
+  const pendingPresentOnJoinRef = useRef(false);
   const showChatRef = useRef(false);
   const screenShareUnbindRef = useRef<(() => void) | null>(null);
   const screenShareSupport = typeof window !== "undefined" ? getScreenShareSupport() : null;
@@ -815,10 +833,32 @@ export default function MeetingRoom() {
     sessionRef.current?.removeParticipant(socketId);
   };
 
+  const handleAdmitAll = () => {
+    joinRequests.forEach((request) => {
+      sessionRef.current?.approveJoin(request.socketId);
+    });
+    setJoinRequests([]);
+    setShowAdmitGuestsDialog(false);
+  };
+
+  const handleCancelJoinRequest = () => {
+    sessionRef.current?.destroy();
+    sessionRef.current = null;
+    setIsJoining(false);
+    setMeetingState("lobby");
+  };
+
   const handleLeaveMeeting = () => {
     cleanupAll();
     resetInMeetingUiState();
+    meetingJoinedAtRef.current = null;
+    setShowLeaveDialog(false);
     setMeetingState("ended");
+  };
+
+  const handlePresentNowFromLobby = () => {
+    pendingPresentOnJoinRef.current = true;
+    void handleJoinNow();
   };
 
   const handleReturnHome = () => {
@@ -863,6 +903,14 @@ export default function MeetingRoom() {
         setIsJoining(false);
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
+        meetingJoinedAtRef.current = Date.now();
+
+        if (pendingPresentOnJoinRef.current) {
+          pendingPresentOnJoinRef.current = false;
+          window.setTimeout(() => {
+            void handleToggleScreenShare();
+          }, 600);
+        }
 
         // Add existing members (excluding local user)
         setParticipants(dedupeParticipants(
@@ -1209,7 +1257,8 @@ export default function MeetingRoom() {
     if (!meetingCode) return;
     const validate = async () => {
       try {
-        await getMeetingByCode(meetingCode);
+        const response = await getMeetingByCode(meetingCode);
+        setMeetingData(response.meeting);
       } catch (err) {
         setMeetingError(err instanceof Error ? err.message : "Meeting not found");
         setTimeout(() => router.push("/dashboard"), 3000);
@@ -1217,6 +1266,43 @@ export default function MeetingRoom() {
     };
     validate();
   }, [meetingCode, router]);
+
+  // Meeting duration timer
+  useEffect(() => {
+    if (meetingState !== "inMeeting" || !meetingJoinedAtRef.current) return;
+
+    const formatDuration = (seconds: number) => {
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      if (hrs > 0) {
+        return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+      }
+      return `${mins}:${String(secs).padStart(2, "0")}`;
+    };
+
+    const tick = () => {
+      if (!meetingJoinedAtRef.current) return;
+      const elapsed = Math.floor((Date.now() - meetingJoinedAtRef.current) / 1000);
+      setMeetingDuration(formatDuration(elapsed));
+    };
+
+    tick();
+    const interval = window.setInterval(tick, 1000);
+    return () => window.clearInterval(interval);
+  }, [meetingState]);
+
+  // Network status
+  useEffect(() => {
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    updateOnline();
+    window.addEventListener("online", updateOnline);
+    window.addEventListener("offline", updateOnline);
+    return () => {
+      window.removeEventListener("online", updateOnline);
+      window.removeEventListener("offline", updateOnline);
+    };
+  }, []);
 
   // Sync clock time
   useEffect(() => {
@@ -1243,6 +1329,9 @@ export default function MeetingRoom() {
       }
       if (layoutRef.current && !layoutRef.current.contains(event.target as Node)) {
         setShowLayoutMenu(false);
+      }
+      if (moreOptionsRef.current && !moreOptionsRef.current.contains(event.target as Node)) {
+        setShowMoreOptionsMenu(false);
       }
       if (audioDeviceMenuRef.current && !audioDeviceMenuRef.current.contains(event.target as Node)) {
         setShowAudioDeviceMenu(false);
@@ -1402,10 +1491,34 @@ export default function MeetingRoom() {
     );
   }
 
+  const getStoredUserId = (): string | null => {
+    if (typeof window === "undefined") return null;
+    try {
+      const raw = localStorage.getItem("user");
+      if (raw) {
+        const user = JSON.parse(raw) as { id?: string };
+        if (user.id) return user.id;
+      }
+      const token = localStorage.getItem("authToken");
+      const payload = token?.split(".")[1];
+      if (!payload) return null;
+      const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+      const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+      const decoded = JSON.parse(atob(padded)) as { id?: string };
+      return decoded.id || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const isMeetingCreator =
+    Boolean(meetingData?.hostId) && getStoredUserId() === meetingData?.hostId;
+
   if (meetingState === "lobby") {
     return (
       <PreviewLobby
         meetingCode={meetingCode ?? ""}
+        meetingTitle={meetingData?.title || undefined}
         displayName={resolvedDisplayName}
         email={isAuthenticated ? identity.email : undefined}
         image={isAuthenticated ? identity.image : undefined}
@@ -1425,36 +1538,69 @@ export default function MeetingRoom() {
         onSelectAudioOutput={handleSelectAudioOutput}
         onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
         onJoinNow={handleJoinNow}
+        onPresentNow={isMeetingCreator ? handlePresentNowFromLobby : undefined}
         isAuthenticated={isAuthenticated}
         customDisplayName={customDisplayName}
         onCustomDisplayNameChange={setCustomDisplayName}
         isJoining={isJoining}
+        isHostPreview={isMeetingCreator || (isAuthenticated && !meetingData)}
       />
     );
   }
 
   if (meetingState === "waiting") {
     return (
-      <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center gap-6">
-        <div className="relative flex items-center justify-center">
-          <div className="absolute h-28 w-28 rounded-full border-4 border-[#8ab4f8] animate-ping" />
-          <MeetAvatar
-            name={resolvedDisplayName}
-            email={isAuthenticated ? identity.email : undefined}
-            image={isAuthenticated ? identity.image : undefined}
-            size="xl"
-          />
-        </div>
-        <h1 className="text-3xl font-light">Asking to join...</h1>
-        <div className="max-w-xs text-center">
-          <p className="truncate text-sm text-white">{resolvedDisplayName}</p>
-          {isAuthenticated && identity.email && (
-            <p className="mt-1 truncate text-xs text-white/55">{identity.email}</p>
-          )}
-        </div>
-        <p className="text-white/60 text-sm max-w-xs text-center leading-relaxed">
-          Please wait. The meeting host will let you in shortly.
-        </p>
+      <div className="fixed inset-0 flex flex-col bg-[#202124] text-white">
+        <header className="flex h-14 items-center px-4 sm:px-6">
+          <span className="font-mono text-sm tracking-wider text-[#8ab4f8]">{meetingCode}</span>
+        </header>
+
+        <main className="flex flex-1 flex-col items-center justify-center gap-8 px-4 pb-8">
+          <div className="relative w-full max-w-md overflow-hidden rounded-xl bg-[#3c4043] aspect-video meet-video-box">
+            <video
+              ref={localVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className={`h-full w-full object-cover ${isCameraOn ? "block" : "hidden"}`}
+            />
+            {!isCameraOn && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <MeetAvatar
+                  name={resolvedDisplayName}
+                  email={isAuthenticated ? identity.email : undefined}
+                  image={isAuthenticated ? identity.image : undefined}
+                  size="xl"
+                />
+              </div>
+            )}
+            <div className="absolute left-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-xs">
+              {resolvedDisplayName}
+            </div>
+          </div>
+
+          <div className="flex flex-col items-center gap-3 text-center">
+            <div className="relative flex h-16 w-16 items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-2 border-[#8ab4f8] meet-waiting-pulse" />
+              <div className="h-10 w-10 rounded-full bg-[#8ab4f8]/20" />
+            </div>
+            <h1 className="text-2xl font-light sm:text-3xl">Asking to join...</h1>
+            <p className="max-w-sm text-sm leading-relaxed text-white/60">
+              Please wait. The meeting host will let you in shortly.
+            </p>
+            {meetingData?.title && (
+              <p className="text-sm text-white/80">{meetingData.title}</p>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleCancelJoinRequest}
+            className="rounded-full border border-white/20 px-6 py-2.5 text-sm font-medium text-[#8ab4f8] transition-colors duration-[180ms] hover:bg-white/8"
+          >
+            Cancel request
+          </button>
+        </main>
       </div>
     );
   }
@@ -1743,42 +1889,109 @@ export default function MeetingRoom() {
     return `${totalIncludingYou} people in call`;
   };
 
+  const filteredParticipants = activeParticipants.filter((p) => {
+    if (!participantSearch.trim()) return true;
+    const query = participantSearch.toLowerCase();
+    return (
+      p.displayName.toLowerCase().includes(query) ||
+      (p.email?.toLowerCase().includes(query) ?? false)
+    );
+  });
+
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
-      {/* Floating Join Request Modal (Host only) */}
-      {isHost && joinRequests.length > 0 && (
-        <div className="absolute right-4 top-4 z-50 w-[min(372px,calc(100vw-32px))] rounded-[28px] border border-white/10 bg-[#2d2e30] p-4 shadow-2xl animate-fade-in">
-          <div className="flex items-start gap-3">
+      {/* Status toast */}
+      {participantLeftMessage && (
+        <div className="absolute top-16 left-1/2 z-[80] -translate-x-1/2 animate-fade-in">
+          <div className="rounded-full bg-[#323639] px-4 py-2 text-sm text-white shadow-lg ring-1 ring-white/10">
+            {participantLeftMessage}
+          </div>
+        </div>
+      )}
+
+      {/* Top bar */}
+      <header className="relative z-30 flex h-12 shrink-0 items-center justify-between border-b border-white/5 px-3 sm:px-4">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <span className="hidden truncate text-sm font-medium text-white/90 sm:block">
+            {meetingData?.title || "Meeting"}
+          </span>
+          <span className="hidden h-4 w-px bg-white/15 sm:block" />
+          <span className="font-mono text-xs tracking-wider text-[#8ab4f8] sm:text-sm">{meetingCode}</span>
+          <span className="hidden text-xs text-white/50 sm:inline">{meetingDuration}</span>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-3">
+          {isHost && (
+            <span className="hidden items-center gap-1 rounded-full bg-yellow-400/10 px-2 py-0.5 text-[11px] font-medium text-yellow-300 sm:inline-flex">
+              <Shield className="h-3 w-3" />
+              Host
+            </span>
+          )}
+          {isMeetingLocked && isHost && (
+            <span className="hidden items-center gap-1 rounded-full bg-white/8 px-2 py-0.5 text-[11px] text-white/70 sm:inline-flex">
+              <Lock className="h-3 w-3" />
+              Locked
+            </span>
+          )}
+          <span className="flex items-center gap-1 text-xs text-white/55">
+            {isOnline ? (
+              <Wifi className="h-3.5 w-3.5 text-[#34a853]" />
+            ) : (
+              <WifiOff className="h-3.5 w-3.5 text-[#ea4335]" />
+            )}
+            <span className="hidden sm:inline">{isOnline ? "Connected" : "Reconnecting"}</span>
+          </span>
+          <span className="flex items-center gap-1 rounded-full bg-white/8 px-2.5 py-1 text-xs text-white/80">
+            <Users className="h-3.5 w-3.5" />
+            {totalConferencingUsers}
+          </span>
+        </div>
+      </header>
+
+      {/* Floating Join Request card (Host only) */}
+      {isHost && joinRequests.length > 0 && !showAdmitGuestsDialog && (
+        <div className="absolute right-4 top-16 z-50 w-[min(340px,calc(100vw-32px))] rounded-2xl border border-white/10 bg-[#2d2e30] p-5 shadow-2xl animate-fade-in">
+          <div className="flex flex-col items-center text-center">
             <MeetAvatar
               name={joinRequests[0].displayName}
               email={joinRequests[0].email}
               image={joinRequests[0].image}
               size="md"
             />
-            <div className="min-w-0 flex-1">
-              <h3 className="text-sm font-medium text-white/90">
-                {joinRequests.length === 1 ? "Someone wants to join" : `${joinRequests.length} people want to join`}
-              </h3>
-              <p className="mt-1 truncate text-sm text-white">{joinRequests[0].displayName}</p>
-              {joinRequests[0].email && (
-                <p className="truncate text-xs text-white/55">{joinRequests[0].email}</p>
-              )}
-            </div>
+            <p className="mt-3 truncate text-[15px] font-medium text-white">
+              {joinRequests[0].displayName}
+            </p>
+            <p className="mt-1 text-sm text-white/60">
+              {joinRequests.length === 1
+                ? "Wants to join this meeting"
+                : `${joinRequests.length} people want to join`}
+            </p>
           </div>
-          <div className="mt-4 flex justify-end gap-3">
+          <div className="mt-5 flex justify-center gap-3">
             <button
+              type="button"
               onClick={() => handleDeny(joinRequests[0].socketId)}
-              className="rounded-full px-5 py-2 text-sm font-medium text-[#8ab4f8] hover:bg-[#8ab4f8]/10 transition-colors"
+              className="meet-control-btn h-9 px-5 text-sm font-medium text-[#8ab4f8] hover:bg-[#8ab4f8]/10"
             >
               Deny
             </button>
             <button
-              onClick={handleOpenAdmitGuestsDialog}
-              className="rounded-full bg-[#8ab4f8] px-5 py-2 text-sm font-medium text-[#202124] hover:bg-[#a8c7fa] transition-colors"
+              type="button"
+              onClick={() => handleAdmit(joinRequests[0].socketId)}
+              className="meet-control-btn meet-control-btn-active h-9 px-5 text-sm font-medium"
             >
-              Admit guest
+              Admit
             </button>
           </div>
+          {joinRequests.length > 1 && (
+            <button
+              type="button"
+              onClick={handleOpenAdmitGuestsDialog}
+              className="mt-3 w-full text-center text-xs text-[#8ab4f8] hover:underline"
+            >
+              View all {joinRequests.length} requests
+            </button>
+          )}
         </div>
       )}
 
@@ -1836,21 +2049,32 @@ export default function MeetingRoom() {
               ))}
             </div>
 
-            <div className="flex flex-col-reverse gap-2 border-t border-[#e8eaed] px-6 py-4 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => handleDenyGuestFromDialog(joinRequests[0].socketId)}
-                className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
-              >
-                Deny entry
-              </button>
-              <button
-                type="button"
-                onClick={() => handleAdmitGuestFromDialog(joinRequests[0].socketId)}
-                className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#1765cc]"
-              >
-                Admit
-              </button>
+            <div className="flex flex-col-reverse gap-2 border-t border-[#e8eaed] px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
+              {joinRequests.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleAdmitAll}
+                  className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe] sm:mr-auto"
+                >
+                  Admit all
+                </button>
+              )}
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleDenyGuestFromDialog(joinRequests[0].socketId)}
+                  className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
+                >
+                  Deny entry
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleAdmitGuestFromDialog(joinRequests[0].socketId)}
+                  className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white shadow-sm transition-colors hover:bg-[#1765cc]"
+                >
+                  Admit
+                </button>
+              </div>
             </div>
           </section>
         </div>
@@ -1893,7 +2117,7 @@ export default function MeetingRoom() {
                 stageLayoutIsSpotlight ? "" : "md:flex-row",
               ].join(" ")}
             >
-              <div className="relative flex-1 min-h-[38vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg transition-all duration-300">
+              <div className="meet-tile relative flex-1 min-h-[38vh] md:min-h-0 rounded-2xl overflow-hidden bg-black border border-white/10 shadow-lg">
                 {stageHasVisibleVideo ? (
                   <ParticipantVideo
                     stream={presenterStream}
@@ -1971,7 +2195,7 @@ export default function MeetingRoom() {
                 {showLocalInFilmstrip && (
                   <div
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10 transition-all duration-300",
+                      "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
                       stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
                       pinnedParticipantId === "local" ? "ring-2 ring-[#8ab4f8]" : "",
                       activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
@@ -2015,7 +2239,7 @@ export default function MeetingRoom() {
                   <div
                     key={p.socketId}
                     className={[
-                      "relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10 transition-all duration-300",
+                      "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
                       stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
                       activeSpeakerId === p.socketId ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                       pinnedParticipantId === p.socketId ? "ring-2 ring-[#8ab4f8]" : "",
@@ -2069,7 +2293,7 @@ export default function MeetingRoom() {
               {/* 1. Local Participant Card */}
               <div
                 className={[
-                  "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center transition-all duration-300",
+                  "meet-tile relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
                   // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
                   pinnedParticipantId === "local" || isScreenSharing
                     ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
@@ -2143,7 +2367,7 @@ export default function MeetingRoom() {
                 <div
                   key={p.socketId}
                   className={[
-                    "relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center transition-all duration-300",
+                    "meet-tile relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
                     pinnedParticipantId === p.socketId || p.isScreenSharing
                       ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                       : "",
@@ -2317,6 +2541,18 @@ export default function MeetingRoom() {
                 <X className="h-4 w-4" />
               </button>
             </div>
+            <div className="border-b border-white/10 px-4 py-3">
+              <div className="flex items-center gap-2 rounded-full border border-white/10 bg-[#202124] px-3 py-2">
+                <Search className="h-4 w-4 shrink-0 text-white/45" />
+                <input
+                  type="text"
+                  value={participantSearch}
+                  onChange={(e) => setParticipantSearch(e.target.value)}
+                  placeholder="Search participants"
+                  className="w-full bg-transparent text-sm text-white outline-none placeholder:text-white/40"
+                />
+              </div>
+            </div>
             <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
               {/* Local member details row */}
               <div className="flex justify-between items-center p-3 rounded-xl bg-white/5 border border-white/5">
@@ -2347,7 +2583,7 @@ export default function MeetingRoom() {
               </div>
 
               {/* Remote members list */}
-              {activeParticipants.map((p) => (
+              {filteredParticipants.map((p) => (
                 <div key={p.socketId} className="flex justify-between items-center p-3 rounded-xl hover:bg-white/5 transition-colors">
                   <div className="flex items-center gap-3">
                     <MeetAvatar
@@ -2413,16 +2649,64 @@ export default function MeetingRoom() {
         </div>
       )}
 
+      {/* Leave / End meeting dialog */}
+      {showLeaveDialog && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 px-4 backdrop-blur-[2px] animate-fade-in">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="leave-meeting-title"
+            className="w-full max-w-[400px] overflow-hidden rounded-[28px] bg-[#f8fafd] text-[#202124] shadow-[0_16px_48px_rgba(0,0,0,0.32)]"
+          >
+            <div className="px-6 pb-2 pt-6">
+              <h2 id="leave-meeting-title" className="text-[22px] font-normal leading-7">
+                {isHost ? "Leave or end the meeting?" : "Leave the meeting?"}
+              </h2>
+              <p className="mt-2 text-sm leading-5 text-[#5f6368]">
+                {isHost
+                  ? "You can leave the meeting or end it for everyone."
+                  : "You'll leave the call for yourself only."}
+              </p>
+            </div>
+            <div className="flex flex-col-reverse gap-2 px-6 py-4 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setShowLeaveDialog(false)}
+                className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleLeaveMeeting}
+                className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
+              >
+                Leave meeting
+              </button>
+              {isHost && (
+                <button
+                  type="button"
+                  onClick={handleLeaveMeeting}
+                  className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white transition-colors hover:bg-[#1765cc]"
+                >
+                  End meeting for all
+                </button>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
       {/* Control Actions Bar */}
-      <div className="min-h-20 bg-[#202124] flex items-center justify-between px-2 sm:px-6 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t border-white/5 relative z-40 gap-2">
+      <div className="min-h-[72px] bg-[#202124] flex items-center justify-between px-2 sm:px-4 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t border-white/5 relative z-40 gap-2">
         {/* Time and room details */}
-        <div className="hidden sm:flex flex-col text-sm font-light text-white/60">
+        <div className="hidden lg:flex flex-col text-xs font-light text-white/55 min-w-[80px]">
           <span>{currentTime}</span>
-          <span className="text-xs text-[#8ab4f8] mt-1 font-mono tracking-wider">{meetingCode}</span>
+          <span className="text-[#8ab4f8] mt-0.5 font-mono tracking-wider">{meetingDuration}</span>
         </div>
 
         {/* Media Buttons */}
-        <div className="flex items-center gap-2 sm:gap-3 mx-auto overflow-x-auto no-scrollbar px-1 max-w-full">
+        <div className="flex items-center gap-1.5 sm:gap-2 mx-auto overflow-x-auto no-scrollbar px-1 max-w-full">
           {/* Audio */}
           <div className="relative" ref={audioDeviceMenuRef}>
             <button
@@ -2433,10 +2717,10 @@ export default function MeetingRoom() {
                 setShowVideoDeviceMenu(false);
                 setShowEmojiPicker(false);
                 setShowLayoutMenu(false);
+                setShowMoreOptionsMenu(false);
               }}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isMicOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
-                }`}
-              title={isMicOn ? "Mute Microphone" : "Unmute Microphone"}
+              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isMicOn ? "meet-control-btn-neutral" : "meet-control-btn-danger"}`}
+              title={isMicOn ? "Mute microphone" : "Unmute microphone"}
             >
               {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
             </button>
@@ -2472,10 +2756,10 @@ export default function MeetingRoom() {
                 setShowAudioDeviceMenu(false);
                 setShowEmojiPicker(false);
                 setShowLayoutMenu(false);
+                setShowMoreOptionsMenu(false);
               }}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isCameraOn ? "bg-[#3c4043] hover:bg-[#4f5357]" : "bg-red-500 hover:bg-red-600 text-white"
-                }`}
-              title={isCameraOn ? "Turn Camera Off" : "Turn Camera On"}
+              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isCameraOn ? "meet-control-btn-neutral" : "meet-control-btn-danger"}`}
+              title={isCameraOn ? "Turn off camera" : "Turn on camera"}
             >
               {isCameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
             </button>
@@ -2493,129 +2777,163 @@ export default function MeetingRoom() {
             )}
           </div>
 
-          {/* Screen Share */}
+          {/* Captions (placeholder) */}
           <button
-            onClick={() => void handleToggleScreenShare()}
-            disabled={!isScreenSharing && screenShareSupport !== null && !screenShareSupport.supported}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${isScreenSharing ? "bg-[#8ab4f8] text-[#202124] hover:bg-[#a8c7fa]" : "bg-[#3c4043] hover:bg-[#4f5357]"
-              }`}
-            title={
-              isScreenSharing
-                ? "Stop sharing screen"
-                : screenShareSupport && !screenShareSupport.supported
-                  ? screenShareSupport.reason
-                  : "Share entire screen"
-            }
+            type="button"
+            disabled
+            className="meet-control-btn meet-control-btn-neutral h-11 w-11 sm:h-12 sm:w-12 opacity-40"
+            title="Turn on captions"
           >
-            <MonitorUp className="h-5 w-5" />
+            <Captions className="h-5 w-5" />
           </button>
-
-          {/* Layout picker */}
-          <div className="relative" ref={layoutRef}>
-            <button
-              onClick={() => {
-                setShowLayoutMenu((prev) => !prev);
-                setShowEmojiPicker(false);
-                setShowAudioDeviceMenu(false);
-                setShowVideoDeviceMenu(false);
-              }}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showLayoutMenu ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
-                }`}
-              title={`Layout: ${activeLayout.label}`}
-            >
-              <ActiveLayoutIcon className="h-5 w-5" />
-            </button>
-            {showLayoutMenu && (
-              <div className="fixed bottom-24 left-1/2 z-[60] w-52 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
-                {layoutOptions.map((option) => {
-                  const LayoutIcon = option.icon;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      onClick={() => handleLayoutChange(option.id)}
-                      className={[
-                        "flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition-colors",
-                        meetingLayout === option.id
-                          ? "bg-[#8ab4f8] text-[#202124]"
-                          : "text-white/85 hover:bg-white/10",
-                      ].join(" ")}
-                      title={`Use ${option.label} layout`}
-                    >
-                      <LayoutIcon className="h-4 w-4 shrink-0" />
-                      <span>{option.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Smile Reaction button */}
-          <div className="relative" ref={emojiRef}>
-            <button
-              onClick={() => {
-                setShowEmojiPicker((prev) => !prev);
-                setShowLayoutMenu(false);
-                setShowAudioDeviceMenu(false);
-                setShowVideoDeviceMenu(false);
-              }}
-              className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${showEmojiPicker ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#3c4043] hover:bg-[#4f5357]"
-                }`}
-              title="Send a reaction"
-            >
-              <Smile className="h-5 w-5" />
-            </button>
-            {showEmojiPicker && (
-              <div className="fixed bottom-24 left-1/2 z-[60] flex -translate-x-1/2 gap-1 rounded-full border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
-                {REACTIONS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    onClick={() => handleReaction(emoji)}
-                    className="flex h-10 w-10 items-center justify-center rounded-full text-2xl transition-all duration-150 hover:scale-110 hover:bg-white/10"
-                    title={`Send ${emoji}`}
-                  >
-                    {emoji}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
           {/* Raise Hand */}
           <button
+            type="button"
             onClick={() => {
               const next = !isHandRaised;
               setIsHandRaised(next);
               sessionRef.current?.sendRaiseHandUpdate(next);
             }}
-            className={`h-12 w-12 rounded-full flex items-center justify-center transition-colors ${isHandRaised ? "bg-yellow-400 text-black hover:bg-yellow-500" : "bg-[#3c4043] hover:bg-[#4f5357]"
-              }`}
+            className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isHandRaised ? "bg-yellow-400 text-[#202124] hover:bg-yellow-500" : "meet-control-btn-neutral"}`}
             title="Raise hand"
           >
             <Hand className="h-5 w-5" />
           </button>
 
-          {/* End Call / Leave room */}
+          {/* Present Now / Screen Share */}
           <button
-            onClick={handleLeaveMeeting}
-            className="h-12 px-4 sm:px-6 rounded-full bg-red-500 hover:bg-red-600 transition-colors flex items-center justify-center gap-2 font-medium shrink-0"
+            type="button"
+            onClick={() => void handleToggleScreenShare()}
+            disabled={!isScreenSharing && screenShareSupport !== null && !screenShareSupport.supported}
+            className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isScreenSharing ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
+            title={
+              isScreenSharing
+                ? "Stop presenting"
+                : screenShareSupport && !screenShareSupport.supported
+                  ? screenShareSupport.reason
+                  : "Present now"
+            }
+          >
+            <MonitorUp className="h-5 w-5" />
+          </button>
+
+          {/* More options */}
+          <div className="relative" ref={moreOptionsRef}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowMoreOptionsMenu((prev) => !prev);
+                setShowLayoutMenu(false);
+                setShowEmojiPicker(false);
+                setShowAudioDeviceMenu(false);
+                setShowVideoDeviceMenu(false);
+              }}
+              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${showMoreOptionsMenu ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
+              title="More options"
+            >
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            {showMoreOptionsMenu && (
+              <div className="fixed bottom-20 left-1/2 z-[60] w-56 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+                <div className="relative" ref={layoutRef}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowLayoutMenu((prev) => !prev);
+                      setShowEmojiPicker(false);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
+                  >
+                    <ActiveLayoutIcon className="h-4 w-4 shrink-0" />
+                    <span>Layout: {activeLayout.label}</span>
+                  </button>
+                  {showLayoutMenu && (
+                    <div className="mt-1 border-t border-white/10 pt-1">
+                      {layoutOptions.map((option) => {
+                        const LayoutIcon = option.icon;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            onClick={() => handleLayoutChange(option.id)}
+                            className={[
+                              "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors",
+                              meetingLayout === option.id
+                                ? "bg-[#8ab4f8] text-[#202124]"
+                                : "text-white/85 hover:bg-white/10",
+                            ].join(" ")}
+                          >
+                            <LayoutIcon className="h-4 w-4 shrink-0" />
+                            <span>{option.label}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="relative mt-1 border-t border-white/10 pt-1" ref={emojiRef}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEmojiPicker((prev) => !prev);
+                      setShowLayoutMenu(false);
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
+                  >
+                    <Smile className="h-4 w-4 shrink-0" />
+                    <span>Send a reaction</span>
+                  </button>
+                  {showEmojiPicker && (
+                    <div className="mt-2 flex flex-wrap justify-center gap-1 px-1">
+                      {REACTIONS.map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => handleReaction(emoji)}
+                          className="flex h-9 w-9 items-center justify-center rounded-full text-xl transition-all duration-150 hover:scale-110 hover:bg-white/10"
+                          title={`Send ${emoji}`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {isHost && (
+                  <button
+                    type="button"
+                    onClick={() => setIsMeetingLocked((prev) => !prev)}
+                    className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
+                  >
+                    <Lock className="h-4 w-4 shrink-0" />
+                    <span>{isMeetingLocked ? "Unlock meeting" : "Lock meeting"}</span>
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Leave call — red circular */}
+          <button
+            type="button"
+            onClick={() => setShowLeaveDialog(true)}
+            className="meet-control-btn meet-control-btn-danger h-11 w-11 sm:h-12 sm:w-12 shrink-0"
             title="Leave call"
           >
             <Phone className="h-5 w-5 rotate-[135deg]" />
-            <span className="hidden md:inline text-sm">Leave</span>
           </button>
         </div>
 
         {/* Sidebar Toggles */}
-        <div className="flex items-center gap-1 sm:gap-2 text-white/70 shrink-0">
+        <div className="flex items-center gap-0.5 sm:gap-1 text-white/70 shrink-0">
           {/* Info toggle */}
           <button
             onClick={() => {
               setParticipantLeftMessage(`Meeting Link: ${window.location.origin}/meeting/${meetingCode}`);
               setTimeout(() => setParticipantLeftMessage(null), 5000);
             }}
-            className="h-11 w-11 rounded-full hover:bg-white/5 flex items-center justify-center transition-colors"
+            className="meet-control-btn h-10 w-10 sm:h-11 sm:w-11 hover:bg-white/5"
             title="Meeting details"
           >
             <Info className="h-5 w-5" />
@@ -2627,8 +2945,7 @@ export default function MeetingRoom() {
               setShowChat((prev) => !prev);
               setShowParticipantsList(false);
             }}
-            className={`relative h-11 w-11 rounded-full flex items-center justify-center transition-colors ${showChat ? "bg-[#8ab4f8] text-[#202124]" : "hover:bg-white/5"
-              }`}
+            className={`meet-control-btn relative h-10 w-10 sm:h-11 sm:w-11 ${showChat ? "meet-control-btn-active" : "hover:bg-white/5"}`}
             title="Chat messages"
           >
             <MessageSquare className="h-5 w-5" />
@@ -2645,11 +2962,20 @@ export default function MeetingRoom() {
               setShowParticipantsList(!showParticipantsList);
               setShowChat(false);
             }}
-            className={`h-11 w-11 rounded-full flex items-center justify-center transition-colors ${showParticipantsList ? "bg-[#8ab4f8] text-[#202124]" : "hover:bg-white/5"
-              }`}
-            title="Show participants list"
+            className={`meet-control-btn h-10 w-10 sm:h-11 sm:w-11 ${showParticipantsList ? "meet-control-btn-active" : "hover:bg-white/5"}`}
+            title="Show participants"
           >
             <Users className="h-5 w-5" />
+          </button>
+
+          {/* Activities (placeholder) */}
+          <button
+            type="button"
+            disabled
+            className="meet-control-btn h-10 w-10 sm:h-11 sm:w-11 opacity-40 hidden sm:flex"
+            title="Activities"
+          >
+            <Sparkles className="h-5 w-5" />
           </button>
         </div>
       </div>
