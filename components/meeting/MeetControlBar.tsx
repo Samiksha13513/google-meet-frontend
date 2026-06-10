@@ -3,7 +3,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
   AlignJustify,
-  Captions,
   ChevronUp,
   Hand,
   Lock,
@@ -15,12 +14,13 @@ import {
   MoreVertical,
   Phone,
   Shield,
-  Shapes,
   Smile,
   Users,
   Video,
   VideoOff,
 } from "lucide-react";
+
+import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮"];
 
@@ -41,7 +41,7 @@ type MeetControlBarProps = {
   isHandRaised: boolean;
   isHost: boolean;
   isMeetingLocked: boolean;
-  showCaptions: boolean;
+  localMicLevel: number;
   showChat: boolean;
   showParticipantsList: boolean;
   unreadMessages: number;
@@ -60,7 +60,6 @@ type MeetControlBarProps = {
   onToggleCamera: () => void;
   onToggleScreenShare: () => void;
   onToggleHandRaise: () => void;
-  onToggleCaptions: () => void;
   onToggleChat: () => void;
   onToggleParticipants: () => void;
   onShowMeetingDetails: () => void;
@@ -89,7 +88,7 @@ export function MeetControlBar({
   isHandRaised,
   isHost,
   isMeetingLocked,
-  showCaptions,
+  localMicLevel,
   showChat,
   showParticipantsList,
   unreadMessages,
@@ -108,7 +107,6 @@ export function MeetControlBar({
   onToggleCamera,
   onToggleScreenShare,
   onToggleHandRaise,
-  onToggleCaptions,
   onToggleChat,
   onToggleParticipants,
   onShowMeetingDetails,
@@ -147,20 +145,10 @@ export function MeetControlBar({
       </div>
 
       <div className="mx-auto flex max-w-full items-center gap-1 overflow-x-auto px-1 no-scrollbar sm:gap-1.5">
-        <button
-          type="button"
-          onClick={() => {
-            closeOtherMenus("more");
-            setShowMoreOptionsMenu(!showMoreOptionsMenu);
-          }}
-          className={`meet-control-btn h-11 w-11 shrink-0 sm:h-12 sm:w-12 ${showMoreOptionsMenu ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
-          title="More options"
-          aria-label="More options"
-        >
-          <ChevronUp className="h-5 w-5" />
-        </button>
-
-        <div className="relative shrink-0" ref={audioDeviceMenuRef}>
+        <div className="relative flex shrink-0 items-center gap-1" ref={audioDeviceMenuRef}>
+          {isMicOn && localMicLevel > 0.04 && (
+            <VoiceActivityIndicator level={localMicLevel} size="sm" />
+          )}
           <div className="meet-split-control">
             <button
               type="button"
@@ -277,17 +265,6 @@ export function MeetControlBar({
             </div>
           )}
         </div>
-
-        <button
-          type="button"
-          onClick={onToggleCaptions}
-          className={`meet-control-btn h-11 w-11 shrink-0 sm:h-12 sm:w-12 ${showCaptions ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
-          title={showCaptions ? "Turn off captions" : "Turn on captions"}
-          aria-label={showCaptions ? "Turn off captions" : "Turn on captions"}
-          aria-pressed={showCaptions}
-        >
-          <Captions className="h-5 w-5" />
-        </button>
 
         <button
           type="button"
@@ -410,15 +387,6 @@ export function MeetControlBar({
               {unreadMessages > 9 ? "9+" : unreadMessages}
             </span>
           )}
-        </button>
-        <button
-          type="button"
-          disabled
-          className="meet-control-btn hidden h-10 w-10 opacity-40 sm:flex sm:h-11 sm:w-11"
-          title="Activities"
-          aria-label="Activities"
-        >
-          <Shapes className="h-5 w-5" />
         </button>
         {isHost && (
           <button

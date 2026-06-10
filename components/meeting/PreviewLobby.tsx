@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Mic,
   MicOff,
-  MoreHorizontal,
   Sparkles,
   Video,
   VideoOff,
@@ -174,18 +173,10 @@ function PreviewControls({
 }) {
   return (
     <>
-      <button
-        type="button"
-        title={isMicOn ? "Microphone active" : "Microphone controls"}
-        className={[
-          "absolute bottom-4 left-4 flex h-7 w-7 items-center justify-center rounded-full transition-colors duration-[180ms]",
-          isMicOn ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#8ab4f8]/70 text-[#202124]",
-        ].join(" ")}
-      >
-        <LobbyMicIndicator isMicOn={isMicOn} level={micLevel} />
-      </button>
-
-      <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4">
+      <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3">
+        {isMicOn && micLevel > 0.04 && (
+          <LobbyMicIndicator isMicOn={isMicOn} level={micLevel} />
+        )}
         <button
           type="button"
           onClick={onToggleMic}
@@ -387,14 +378,6 @@ export function PreviewLobby({
         </div>
       )}
 
-      <button
-        type="button"
-        title="More options"
-        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full text-white transition-colors duration-[180ms] hover:bg-white/15"
-      >
-        <MoreHorizontal className="h-5 w-5 rotate-90" />
-      </button>
-
       <PreviewControls
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
@@ -466,10 +449,6 @@ export function PreviewLobby({
           </button>
         ) : (
           <div className="flex items-center gap-3">
-            <div className="hidden text-right text-xs leading-tight text-[#202124] sm:block">
-              {email && <p>{email}</p>}
-              <p className="text-[#5f6368]">Switch account</p>
-            </div>
             <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#8e24aa] text-base font-medium text-white">
               {image ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -515,14 +494,6 @@ export function PreviewLobby({
               >
                 {isJoining ? "Joining..." : "Join now"}
               </button>
-
-              <button
-                type="button"
-                className="meet-other-btn mt-4 flex w-full max-w-sm items-center justify-center gap-1 transition-colors duration-[180ms] hover:bg-[#f8fafd]"
-              >
-                Other ways to join
-                <ChevronDown className="h-4 w-4 text-[#1a73e8]" />
-              </button>
             </>
           ) : (
             <>
@@ -551,14 +522,6 @@ export function PreviewLobby({
                   className={`mt-8 w-full meet-ask-btn transition-colors duration-[180ms] ${customDisplayName.trim() ? "enabled" : ""}`}
                 >
                   {isJoining ? "Joining..." : "Ask to join"}
-                </button>
-
-                <button
-                  type="button"
-                  className="meet-other-btn mt-4 flex w-full items-center justify-center gap-1 transition-colors duration-[180ms] hover:bg-[#f8fafd]"
-                >
-                  Other ways to join
-                  <ChevronDown className="h-4 w-4 text-[#1a73e8]" />
                 </button>
               </div>
 

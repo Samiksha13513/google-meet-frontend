@@ -73,6 +73,7 @@ export type MeetingSessionCallbacks = {
   onLocalScreenShareEnded?: () => void;
   onHandRaisedChanged?: (data: { senderId: string; isHandRaised: boolean }) => void;
   onKicked?: () => void;
+  onMeetingEnded?: (data: { reason?: string }) => void;
 };
 
 export class MeetingPeerSession {
@@ -389,6 +390,10 @@ export class MeetingPeerSession {
       roomId: this.roomId,
       isHandRaised,
     });
+  }
+
+  endMeetingForAll(): void {
+    this.socket.emit("end-meeting-for-all", { roomId: this.roomId });
   }
 
   destroy(): void {
@@ -910,6 +915,10 @@ export class MeetingPeerSession {
       this.callbacks.onHandRaisedChanged?.(data);
     });
 
+    this.socket.on("meeting-ended", (data: { reason?: string }) => {
+      this.callbacks.onMeetingEnded?.(data);
+    });
+
     this.socket.on("participant-status-changed", (data: {
       socketId: string;
       isMicOn: boolean;
@@ -941,6 +950,7 @@ export class MeetingPeerSession {
     this.socket.off("screen-share-started");
     this.socket.off("screen-share-stopped");
     this.socket.off("raise-hand-changed");
+    this.socket.off("meeting-ended");
     this.socket.off("participant-status-changed");
   }
 

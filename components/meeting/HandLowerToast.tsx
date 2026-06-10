@@ -6,7 +6,7 @@ type HandLowerToastProps = {
 
 export function HandLowerToast({ onKeepRaised }: HandLowerToastProps) {
   return (
-    <div className="pointer-events-auto fixed bottom-28 left-4 z-50 max-w-[min(420px,calc(100vw-32px))] animate-fade-in sm:left-6">
+    <div className="pointer-events-auto fixed bottom-[76px] left-4 z-[55] max-w-[min(420px,calc(100vw-32px))] animate-fade-in sm:left-6">
       <div className="rounded-xl bg-[#3c4043] px-4 py-3.5 text-sm leading-5 text-white shadow-lg ring-1 ring-white/10">
         It sounds like you&apos;ve said something, so your hand will be lowered.{" "}
         <button

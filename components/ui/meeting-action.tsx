@@ -8,7 +8,6 @@ import {
   Calendar,
   Copy,
   X,
-  Phone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -285,29 +284,6 @@ export function MeetingActions() {
             )}
           </button>
         </div>
-
-        {/* Dial In */}
-        <div className="mt-8">
-          <p className="text-[15px] text-[#202124]">
-            Dial-in: (US) +1 813-435-1527
-          </p>
-
-          <p className="mt-2 text-[15px] text-[#202124]">
-            PIN: 617 403 022#
-          </p>
-        </div>
-
-        {/* More phone numbers */}
-        <button
-          onClick={() => window.open('/more-phone-numbers', '_blank')}
-          className="mt-8 flex items-center gap-3 text-[#1a73e8] hover:underline"
-          type="button"
-        >
-          <Phone size={18} />
-          <span className="text-[16px]">
-            More phone numbers
-          </span>
-        </button>
 
         {/* Share full details */}
         <button

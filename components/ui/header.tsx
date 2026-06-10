@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { LayoutGrid, Menu } from "lucide-react";
+import { Menu } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 
@@ -77,9 +77,8 @@ export function Header({ onMenuClick, isSidebarOpen = true }: HeaderProps) {
     [now]
   );
 
-  const displayName = user?.name?.trim() || user?.email?.split("@")[0] || "Google user";
-  const displayEmail = user?.email || "";
-  const fallbackInitial = displayName.charAt(0).toUpperCase();
+  const displayName = user?.name?.trim() || user?.email?.split("@")[0] || "";
+  const fallbackInitial = (displayName || "G").charAt(0).toUpperCase();
 
   return (
     <header className="z-30 flex h-16 shrink-0 items-center justify-between border-b border-[#e0e0e0] bg-white px-2 pr-3 sm:px-3 sm:pr-4">
@@ -118,28 +117,15 @@ export function Header({ onMenuClick, isSidebarOpen = true }: HeaderProps) {
           {currentTime} &bull; {currentDate}
         </span>
 
-        {/* Help, Feedback and Settings intentionally removed to match requested header */}
-
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-10 w-10 rounded-full text-[#5f6368] hover:bg-[#f1f3f4]"
-          title="Google apps"
-        >
-          <LayoutGrid className="h-5 w-5 stroke-[1.8]" />
-        </Button>
-
-        <div className="hidden min-w-0 text-right leading-tight lg:block">
-          <p className="max-w-36 truncate text-sm font-medium text-[#202124]">{displayName}</p>
-          {displayEmail && (
-            <p className="max-w-36 truncate text-xs font-normal text-[#5f6368]">{displayEmail}</p>
-          )}
-        </div>
+        {displayName && (
+          <div className="hidden min-w-0 text-right leading-tight lg:block">
+            <p className="max-w-36 truncate text-sm font-medium text-[#202124]">{displayName}</p>
+          </div>
+        )}
 
         <Avatar
-          className={cn("ml-1 h-8 w-8 cursor-pointer bg-[#0b8043]", displayEmail && "ring-2 ring-white")}
-          title={displayEmail ? `${displayName} (${displayEmail})` : displayName}
+          className={cn("ml-1 h-8 w-8 cursor-pointer bg-[#0b8043]")}
+          title={displayName || "Account"}
         >
           {user?.image && (
             <AvatarImage src={user.image} alt={displayName} referrerPolicy="no-referrer" />

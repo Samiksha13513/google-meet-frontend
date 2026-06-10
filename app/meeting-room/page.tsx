@@ -19,6 +19,8 @@ import {
   Pin,
   PinOff,
   Lock,
+  Hand,
+  Phone,
 } from "lucide-react";
 
 import { useParams, useRouter } from "next/navigation";
@@ -34,12 +36,11 @@ import { detachVideoElement, getStreamTrackSignature, stopMediaStream, streamsSh
 import { PreviewLobby } from "@/components/meeting/PreviewLobby";
 import { GuestWaitingLobby } from "@/components/meeting/GuestWaitingLobby";
 import { AdmitGuestControl } from "@/components/meeting/AdmitGuestControl";
-import { HandRaisedBadge } from "@/components/meeting/HandRaisedBadge";
 import { HandLowerToast } from "@/components/meeting/HandLowerToast";
+import { HandRaiseNotifications } from "@/components/meeting/HandRaiseNotifications";
 import { MeetControlBar } from "@/components/meeting/MeetControlBar";
 import { MeetPersonAvatar } from "@/components/meeting/MeetPersonAvatar";
 import { PeoplePanel } from "@/components/meeting/PeoplePanel";
-import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import {
   getCurrentUserIdentity,
   getDisplayInitial,
@@ -328,8 +329,8 @@ export default function MeetingRoom() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [handLowerPrompt, setHandLowerPrompt] = useState(false);
-  const [showCaptions, setShowCaptions] = useState(false);
-  const [audioUiTick, setAudioUiTick] = useState(0);
+  const [localMicLevel, setLocalMicLevel] = useState(0);
+  const [endedByHost, setEndedByHost] = useState(false);
 
   const [isHost, setIsHost] = useState(false);
   const [meetingError, setMeetingError] = useState<string | null>(null);
@@ -397,6 +398,7 @@ export default function MeetingRoom() {
   const reactionIdRef = useRef(0);
   const lastLocalReactionRef = useRef<{ emoji: string; pendingEcho: boolean } | null>(null);
   const audioLevelsRef = useRef<Record<string, number>>({});
+  const localMicLevelRef = useRef(0);
   const participantsRef = useRef<Participant[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioMonitorsRef = useRef<Map<string, () => void>>(new Map());
@@ -473,7 +475,6 @@ export default function MeetingRoom() {
     setIsScreenSharing(false);
     setIsHandRaised(false);
     setHandLowerPrompt(false);
-    setShowCaptions(false);
     keepHandRaisedRef.current = false;
     clearHandRaiseTimers();
     setScreenShareError(null);
@@ -904,6 +905,17 @@ export default function MeetingRoom() {
     resetInMeetingUiState();
     meetingJoinedAtRef.current = null;
     setShowLeaveDialog(false);
+    setEndedByHost(false);
+    setMeetingState("ended");
+  };
+
+  const handleEndMeetingForAll = () => {
+    sessionRef.current?.endMeetingForAll();
+    cleanupAll();
+    resetInMeetingUiState();
+    meetingJoinedAtRef.current = null;
+    setShowLeaveDialog(false);
+    setEndedByHost(true);
     setMeetingState("ended");
   };
 
@@ -1164,6 +1176,13 @@ export default function MeetingRoom() {
         cleanupAll();
         setMeetingState("denied");
         setDeniedReason("You were removed from the meeting by the host");
+      },
+      onMeetingEnded: () => {
+        cleanupAll();
+        resetInMeetingUiState();
+        meetingJoinedAtRef.current = null;
+        setEndedByHost(true);
+        setMeetingState("ended");
       },
     });
 
@@ -1516,7 +1535,12 @@ export default function MeetingRoom() {
         activeSpeakerRef.current = maxId;
         setActiveSpeakerId(maxId);
       }
-      setAudioUiTick((tick) => tick + 1);
+
+      const localLevel = audioLevelsRef.current.local || 0;
+      if (Math.abs(localLevel - localMicLevelRef.current) > 0.015) {
+        localMicLevelRef.current = localLevel;
+        setLocalMicLevel(localLevel);
+      }
     }, 320);
 
     return () => {
@@ -1729,8 +1753,10 @@ export default function MeetingRoom() {
   if (meetingState === "ended") {
     return (
       <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center gap-6">
-        <h1 className="text-3xl font-light">You left the meeting</h1>
-        <p className="text-white/60 text-sm">Meeting code: {meetingCode}</p>
+        <h1 className="text-3xl font-light">
+          {endedByHost ? "The meeting has ended" : "You left the meeting"}
+        </h1>
+        <p className="text-sm text-white/60">Meeting code: {meetingCode}</p>
         <div className="flex gap-4 mt-2">
           <button
             onClick={handleRejoin}
@@ -1756,6 +1782,14 @@ export default function MeetingRoom() {
     const status = (p as any).status ?? null;
     return status !== "IN_WAITING_ROOM";
   });
+  const raisedHandNotifications = [
+    ...(isHandRaised && !handLowerPrompt
+      ? [{ id: "local", name: resolvedDisplayName }]
+      : []),
+    ...activeParticipants
+      .filter((p) => p.isHandRaised)
+      .map((p) => ({ id: p.socketId, name: p.displayName })),
+  ];
   const totalConferencingUsers = activeParticipants.length + 1; // Participants + local user
   const isTwoUp = totalConferencingUsers === 2;
   const layoutOptions: Array<{
@@ -1869,40 +1903,31 @@ export default function MeetingRoom() {
     );
   };
 
-  const renderTileBadges = (props: any) => {
-    const { id, name, host, handRaised, micOn, screenSharing, compact = false } = props;
-    void audioUiTick;
-    const level = audioLevelsRef.current[id] || 0;
-    const showActivity = micOn && level > 0.04;
+  const renderTileBadges = (props: {
+    id: string;
+    name: string;
+    host: boolean;
+    handRaised?: boolean;
+    micOn: boolean;
+    screenSharing: boolean;
+    compact?: boolean;
+  }) => {
+    const { name, host, handRaised, micOn, screenSharing, compact = false } = props;
 
     return (
-      <>
-        {handRaised && (
-          <HandRaisedBadge
-            name={name.replace(/\s*\(You\)\s*$/i, "").trim() || name}
-            compact={compact}
-          />
-        )}
-
-        {showActivity && (
-          <div
-            className={`absolute ${compact ? "top-2 left-2" : "top-4 left-4"} z-10`}
-            aria-hidden
-          >
-            <VoiceActivityIndicator level={level} size={compact ? "sm" : "md"} />
-          </div>
-        )}
-
-        <div className={`absolute ${compact ? "bottom-1 left-1 px-2 py-0.5 text-[10px]" : "bottom-3 left-3 px-3 py-1.5 text-xs"} z-20 flex max-w-[80%] items-center gap-2 rounded-full border border-white/10 bg-black/60 font-light tracking-wide backdrop-blur-md`}>
-          <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
-          {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
-          {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
-          {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
-          {pinnedParticipantId === id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
-        </div>
-      </>
+      <div
+        className={`absolute ${compact ? "bottom-1 left-1 px-2 py-0.5 text-[10px]" : "bottom-3 left-3 px-3 py-1.5 text-xs"} z-20 flex max-w-[80%] items-center gap-2 rounded-full border border-white/10 bg-black/60 font-light tracking-wide backdrop-blur-md`}
+      >
+        <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
+        {handRaised && <Hand className="h-3 w-3 text-[#81c995]" aria-label="Hand raised" />}
+        {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
+        {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
+        {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
+        {pinnedParticipantId === props.id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
+      </div>
     );
   };
+
   const renderDeviceList = (
     title: string,
     devices: MediaDeviceInfo[],
@@ -2010,11 +2035,6 @@ export default function MeetingRoom() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          {isHandRaised && (
-            <div className="hidden sm:block">
-              <HandRaisedBadge name={resolvedDisplayName} compact />
-            </div>
-          )}
           <button
             type="button"
             onClick={() => {
@@ -2075,6 +2095,11 @@ export default function MeetingRoom() {
           </div>
         </div>
       </div>
+
+      <HandRaiseNotifications
+        raisedHands={raisedHandNotifications}
+        stackOffset={handLowerPrompt && isHandRaised ? 88 : 0}
+      />
 
       {handLowerPrompt && isHandRaised && (
         <HandLowerToast onKeepRaised={handleKeepHandRaised} />
@@ -2510,11 +2535,6 @@ export default function MeetingRoom() {
             isLocalMicOn={isMicOn}
             isLocalCameraOn={isCameraOn}
             isLocalHandRaised={isHandRaised}
-            isLocalActiveSpeaker={activeSpeakerId === "local"}
-            localMicLevel={audioUiTick >= 0 ? audioLevelsRef.current.local || 0 : 0}
-            getParticipantMicLevel={(socketId) =>
-              audioUiTick >= 0 ? audioLevelsRef.current[socketId] || 0 : 0
-            }
             joinRequests={joinRequests}
             participants={filteredParticipants}
             searchQuery={participantSearch}
@@ -2549,42 +2569,45 @@ export default function MeetingRoom() {
             role="dialog"
             aria-modal="true"
             aria-labelledby="leave-meeting-title"
-            className="w-full max-w-[400px] overflow-hidden rounded-[28px] bg-[#f8fafd] text-[#202124] shadow-[0_16px_48px_rgba(0,0,0,0.32)]"
+            className="w-full max-w-[400px] overflow-hidden rounded-[28px] bg-white text-[#202124] shadow-[0_8px_40px_rgba(0,0,0,0.2)]"
           >
             <div className="px-6 pb-2 pt-6">
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-[#fce8e6]">
+                <Phone className="h-6 w-6 rotate-[135deg] text-[#d93025]" aria-hidden />
+              </div>
               <h2 id="leave-meeting-title" className="text-[22px] font-normal leading-7">
-                {isHost ? "Leave or end the meeting?" : "Leave the meeting?"}
+                {isHost ? "Leave call?" : "Leave call?"}
               </h2>
               <p className="mt-2 text-sm leading-5 text-[#5f6368]">
                 {isHost
-                  ? "You can leave the meeting or end it for everyone."
-                  : "You'll leave the call for yourself only."}
+                  ? "You can let others keep talking, or end the call for everyone."
+                  : "You'll leave the call. Others can keep talking."}
               </p>
             </div>
-            <div className="flex flex-col-reverse gap-2 px-6 py-4 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={() => setShowLeaveDialog(false)}
-                className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleLeaveMeeting}
-                className="h-10 rounded-full px-5 text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#e8f0fe]"
-              >
-                Leave meeting
-              </button>
+            <div className="flex flex-col gap-2 px-6 pb-6 pt-2">
               {isHost && (
                 <button
                   type="button"
-                  onClick={handleLeaveMeeting}
-                  className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white transition-colors hover:bg-[#1765cc]"
+                  onClick={handleEndMeetingForAll}
+                  className="h-11 w-full rounded-full bg-[#d93025] text-sm font-medium text-white transition-colors hover:bg-[#c5221f]"
                 >
-                  End meeting for all
+                  End call for everyone
                 </button>
               )}
+              <button
+                type="button"
+                onClick={handleLeaveMeeting}
+                className="h-11 w-full rounded-full border border-[#dadce0] text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#f8fafd]"
+              >
+                Leave call
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowLeaveDialog(false)}
+                className="h-11 w-full rounded-full text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#f1f3f4]"
+              >
+                Cancel
+              </button>
             </div>
           </section>
         </div>
@@ -2599,7 +2622,7 @@ export default function MeetingRoom() {
         isHandRaised={isHandRaised}
         isHost={isHost}
         isMeetingLocked={isMeetingLocked}
-        showCaptions={showCaptions}
+        localMicLevel={localMicLevel}
         showChat={showChat}
         showParticipantsList={showParticipantsList}
         unreadMessages={unreadMessages}
@@ -2646,7 +2669,6 @@ export default function MeetingRoom() {
         onToggleCamera={handleToggleCamera}
         onToggleScreenShare={() => void handleToggleScreenShare()}
         onToggleHandRaise={handleToggleHandRaise}
-        onToggleCaptions={() => setShowCaptions((prev) => !prev)}
         onToggleChat={() => {
           setShowChat((prev) => !prev);
           setShowParticipantsList(false);

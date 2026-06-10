@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 
 import { MeetPersonAvatar } from "@/components/meeting/MeetPersonAvatar";
-import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import type { AdmitGuestRequest } from "@/components/meeting/AdmitGuestControl";
 
 type InMeetingParticipant = {
@@ -39,9 +38,6 @@ type PeoplePanelProps = {
   isLocalMicOn: boolean;
   isLocalCameraOn: boolean;
   isLocalHandRaised: boolean;
-  isLocalActiveSpeaker: boolean;
-  localMicLevel?: number;
-  getParticipantMicLevel?: (socketId: string) => number;
   joinRequests: AdmitGuestRequest[];
   participants: InMeetingParticipant[];
   searchQuery: string;
@@ -66,9 +62,6 @@ export function PeoplePanel({
   isLocalMicOn,
   isLocalCameraOn,
   isLocalHandRaised,
-  isLocalActiveSpeaker,
-  localMicLevel = 0,
-  getParticipantMicLevel,
   joinRequests,
   participants,
   searchQuery,
@@ -260,24 +253,11 @@ export function PeoplePanel({
                       {isHost ? "Meeting host" : "In the meeting"}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1">
-                    {isLocalMicOn && localMicLevel > 0.04 ? (
-                      <VoiceActivityIndicator level={localMicLevel} size="sm" />
-                    ) : (
-                      <span className="flex gap-1 text-white/50">
-                        {isLocalHandRaised && <Hand className="h-4 w-4 text-[#81c995]" />}
-                        {isLocalMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
-                        {isLocalCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
-                      </span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 hover:bg-white/10"
-                    aria-label="More options"
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </button>
+                  <span className="flex gap-1 text-white/50">
+                    {isLocalHandRaised && <Hand className="h-4 w-4 text-[#81c995]" />}
+                    {isLocalMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
+                    {isLocalCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
+                  </span>
                 </div>
 
                 {filteredInMeeting.map((p) => (
@@ -297,20 +277,11 @@ export function PeoplePanel({
                         {p.isHost ? "Meeting host" : p.email || "In the meeting"}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1 text-white/50">
-                      {p.isMicOn && (getParticipantMicLevel?.(p.socketId) || 0) > 0.04 ? (
-                        <VoiceActivityIndicator
-                          level={getParticipantMicLevel?.(p.socketId) || 0}
-                          size="sm"
-                        />
-                      ) : (
-                        <>
-                          {p.isHandRaised && <Hand className="h-4 w-4 text-[#81c995]" />}
-                          {p.isMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
-                          {p.isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
-                        </>
-                      )}
-                    </div>
+                    <span className="flex gap-1 text-white/50">
+                      {p.isHandRaised && <Hand className="h-4 w-4 text-[#81c995]" />}
+                      {p.isMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
+                      {p.isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
+                    </span>
                     {isHost && onRemove && (
                       <button
                         type="button"
@@ -321,13 +292,6 @@ export function PeoplePanel({
                         <UserX className="h-4 w-4" />
                       </button>
                     )}
-                    <button
-                      type="button"
-                      className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 hover:bg-white/10"
-                      aria-label="More options"
-                    >
-                      <MoreVertical className="h-4 w-4" />
-                    </button>
                   </div>
                 ))}
               </>
