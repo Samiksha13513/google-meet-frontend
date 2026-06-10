@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ChevronDown,
@@ -19,6 +19,9 @@ import { googleLogin } from "@/services/auth";
 import Image from "next/image";
 import { useMeetingStore } from "@/store/meeting-store";
 import { socket } from "@/lib/socket";
+import { LobbyMicIndicator } from "@/components/meeting/LobbyMicIndicator";
+import { useMicLevel } from "@/hooks/useMicLevel";
+import { SelfieBackgroundEffect } from "@/webrtc/selfie-effects";
 
 type PreviewLobbyProps = {
   displayName: string;
@@ -155,22 +158,31 @@ function ParticipantAvatar({
 function PreviewControls({
   isMicOn,
   isCameraOn,
+  micLevel,
+  isVisualEffectsOn,
   onToggleMic,
   onToggleCamera,
+  onToggleVisualEffects,
 }: {
   isMicOn: boolean;
   isCameraOn: boolean;
+  micLevel: number;
+  isVisualEffectsOn: boolean;
   onToggleMic: () => void;
   onToggleCamera: () => void;
+  onToggleVisualEffects: () => void;
 }) {
   return (
     <>
       <button
         type="button"
-        title="More controls"
-        className="absolute bottom-4 left-4 flex h-7 w-7 items-center justify-center rounded-full bg-[#8ab4f8] text-[#202124] transition-colors duration-[180ms] hover:bg-[#aecbfa]"
+        title={isMicOn ? "Microphone active" : "Microphone controls"}
+        className={[
+          "absolute bottom-4 left-4 flex h-7 w-7 items-center justify-center rounded-full transition-colors duration-[180ms]",
+          isMicOn ? "bg-[#8ab4f8] text-[#202124]" : "bg-[#8ab4f8]/70 text-[#202124]",
+        ].join(" ")}
       >
-        <MoreHorizontal className="h-4 w-4" />
+        <LobbyMicIndicator isMicOn={isMicOn} level={micLevel} />
       </button>
 
       <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4">
@@ -201,8 +213,12 @@ function PreviewControls({
 
       <button
         type="button"
-        title="Apply visual effects"
-        className="meet-lobby-control meet-lobby-control-on absolute bottom-4 right-4 h-12 w-12"
+        onClick={onToggleVisualEffects}
+        title={isVisualEffectsOn ? "Turn off visual effects" : "Apply visual effects"}
+        className={[
+          "meet-lobby-control meet-lobby-control-on absolute bottom-4 right-4 h-12 w-12",
+          isVisualEffectsOn ? "bg-white/25 ring-2 ring-white/70" : "",
+        ].join(" ")}
       >
         <Sparkles className="h-5 w-5" />
       </button>
@@ -235,10 +251,66 @@ export function PreviewLobby({
   customDisplayName,
   onCustomDisplayNameChange,
 }: PreviewLobbyProps) {
-  const label = displayName || (isAuthenticated ? "Signed-in user" : "Guest");
-  const initial = getDisplayInitial(label);
+  const label =
+    customDisplayName.trim() ||
+    displayName ||
+    (isAuthenticated ? "Signed-in user" : "");
+  const initial = getDisplayInitial(label || "Guest");
   const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
+  const [isVisualEffectsOn, setIsVisualEffectsOn] = useState(false);
+  const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
+  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const selfieEffectRef = useRef<SelfieBackgroundEffect | null>(null);
   const participants = useMeetingStore((s) => s.participants || []);
+  const micLevel = useMicLevel(previewStream, isMicOn);
+
+  useEffect(() => {
+    const syncStream = () => {
+      const stream = videoRef.current?.srcObject;
+      setPreviewStream(stream instanceof MediaStream ? stream : null);
+    };
+
+    syncStream();
+    const intervalId = window.setInterval(syncStream, 400);
+    return () => window.clearInterval(intervalId);
+  }, [videoRef, isCameraOn, isMicOn]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    const canvas = previewCanvasRef.current;
+
+    if (!isVisualEffectsOn || !isCameraOn || !video || !canvas) {
+      selfieEffectRef.current?.stop();
+      return;
+    }
+
+    let cancelled = false;
+    const effect = selfieEffectRef.current ?? new SelfieBackgroundEffect();
+    selfieEffectRef.current = effect;
+
+    void effect.startPreview(video, canvas).catch((error) => {
+      console.warn("[SelfieEffects] preview failed:", error);
+      if (!cancelled) {
+        setIsVisualEffectsOn(false);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      effect.stop();
+    };
+  }, [isVisualEffectsOn, isCameraOn, videoRef]);
+
+  useEffect(() => {
+    return () => {
+      selfieEffectRef.current?.destroy();
+      selfieEffectRef.current = null;
+    };
+  }, []);
+
+  const handleToggleVisualEffects = () => {
+    setIsVisualEffectsOn((prev) => !prev);
+  };
 
   const others = participants.filter((p) => {
     const participantSocketId = (p as { socketId?: string; id?: string }).socketId ?? (p as { id?: string }).id ?? null;
@@ -268,6 +340,8 @@ export function PreviewLobby({
     ? !isJoining && !mediaError
     : !isJoining && !mediaError && Boolean(customDisplayName.trim());
 
+  const showProcessedPreview = isCameraOn && isVisualEffectsOn;
+
   const previewCard = (
     <div className="relative aspect-video w-full overflow-hidden meet-video-box bg-[#3c4043]">
       <video
@@ -275,7 +349,11 @@ export function PreviewLobby({
         autoPlay
         muted
         playsInline
-        className={`h-full w-full object-cover ${isCameraOn ? "block" : "hidden"}`}
+        className={`h-full w-full object-cover ${isCameraOn && !showProcessedPreview ? "block" : "hidden"}`}
+      />
+      <canvas
+        ref={previewCanvasRef}
+        className={`h-full w-full object-cover ${showProcessedPreview ? "block" : "hidden"}`}
       />
 
       {!isCameraOn && (
@@ -303,9 +381,11 @@ export function PreviewLobby({
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/55 to-transparent" />
 
-      <div className="absolute left-4 top-4 max-w-[70%] truncate text-sm font-medium text-white">
-        {label}
-      </div>
+      {label && (
+        <div className="absolute left-4 top-4 max-w-[70%] truncate text-sm font-medium text-white">
+          {label}
+        </div>
+      )}
 
       <button
         type="button"
@@ -318,8 +398,11 @@ export function PreviewLobby({
       <PreviewControls
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
+        micLevel={micLevel}
+        isVisualEffectsOn={isVisualEffectsOn}
         onToggleMic={onToggleMic}
         onToggleCamera={onToggleCamera}
+        onToggleVisualEffects={handleToggleVisualEffects}
       />
     </div>
   );
@@ -453,6 +536,7 @@ export function PreviewLobby({
                   value={customDisplayName}
                   onChange={(e) => onCustomDisplayNameChange(e.target.value)}
                   placeholder="Your name"
+              autoComplete="name"
                   className="meet-guest-input w-full"
                   maxLength={60}
                 />

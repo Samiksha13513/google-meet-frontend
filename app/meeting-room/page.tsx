@@ -25,8 +25,6 @@ import {
   Captions,
   MoreVertical,
   Lock,
-  Wifi,
-  WifiOff,
   Sparkles,
 } from "lucide-react";
 
@@ -43,6 +41,7 @@ import { detachVideoElement, getStreamTrackSignature, stopMediaStream, streamsSh
 import { PreviewLobby } from "@/components/meeting/PreviewLobby";
 import { GuestWaitingLobby } from "@/components/meeting/GuestWaitingLobby";
 import { AdmitGuestControl } from "@/components/meeting/AdmitGuestControl";
+import { HandRaisedBadge } from "@/components/meeting/HandRaisedBadge";
 import { PeoplePanel } from "@/components/meeting/PeoplePanel";
 import {
   getCurrentUserIdentity,
@@ -323,7 +322,7 @@ export default function MeetingRoom() {
   const [isAuthenticated] = useState(
     () => typeof window !== "undefined" && !!localStorage.getItem("authToken")
   );
-  const [customDisplayName, setCustomDisplayName] = useState("Guest");
+  const [customDisplayName, setCustomDisplayName] = useState("");
 
   const resolvedDisplayName = isAuthenticated ? displayName : (customDisplayName || "Guest");
 
@@ -360,7 +359,6 @@ export default function MeetingRoom() {
   const [showMoreOptionsMenu, setShowMoreOptionsMenu] = useState(false);
   const [isMeetingLocked, setIsMeetingLocked] = useState(false);
   const [participantSearch, setParticipantSearch] = useState("");
-  const [isOnline, setIsOnline] = useState(true);
 
   // Active participants list
   const [participants, setParticipants] = useState<Participant[]>([]);
@@ -1283,18 +1281,6 @@ export default function MeetingRoom() {
     return () => window.clearInterval(interval);
   }, [meetingState]);
 
-  // Network status
-  useEffect(() => {
-    const updateOnline = () => setIsOnline(navigator.onLine);
-    updateOnline();
-    window.addEventListener("online", updateOnline);
-    window.addEventListener("offline", updateOnline);
-    return () => {
-      window.removeEventListener("online", updateOnline);
-      window.removeEventListener("offline", updateOnline);
-    };
-  }, []);
-
   // Sync clock time
   useEffect(() => {
     const update = () => {
@@ -1796,13 +1782,14 @@ export default function MeetingRoom() {
     return (
       <>
         {handRaised && (
-          <div className={`absolute ${compact ? "top-2 right-2 h-7 w-7" : "top-4 right-4 h-9 w-9"} z-20 flex items-center justify-center rounded-full bg-yellow-400 text-black shadow-xl animate-pulse`}> 
-            <Hand className={compact ? "h-4 w-4" : "h-5 w-5"} />
-          </div>
+          <HandRaisedBadge
+            name={name.replace(/\s*\(You\)\s*$/i, "").trim() || name}
+            compact={compact}
+          />
         )}
 
         {/* Mic activity indicator */}
-        {showActivity && (
+        {showActivity && !handRaised && (
           <div
             aria-hidden
             className={`absolute ${compact ? "top-2 left-2" : "top-4 left-4"} z-10 flex items-center justify-center`}
@@ -1833,7 +1820,6 @@ export default function MeetingRoom() {
         <div className={`absolute ${compact ? "bottom-1 left-1 px-2 py-0.5 text-[10px]" : "bottom-3 left-3 px-3 py-1.5 text-xs"} z-20 flex max-w-[80%] items-center gap-2 rounded-full border border-white/10 bg-black/60 font-light tracking-wide backdrop-blur-md`}>
           <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
           {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
-          {handRaised && <Hand className="h-3.5 w-3.5 text-yellow-300" />}
           {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
           {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
           {pinnedParticipantId === id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
@@ -1953,18 +1939,6 @@ export default function MeetingRoom() {
               Locked
             </span>
           )}
-          <span className="flex items-center gap-1 text-xs text-white/55">
-            {isOnline ? (
-              <Wifi className="h-3.5 w-3.5 text-[#34a853]" />
-            ) : (
-              <WifiOff className="h-3.5 w-3.5 text-[#ea4335]" />
-            )}
-            <span className="hidden sm:inline">{isOnline ? "Connected" : "Reconnecting"}</span>
-          </span>
-          <span className="flex items-center gap-1 rounded-full bg-white/8 px-2.5 py-1 text-xs text-white/80">
-            <Users className="h-3.5 w-3.5" />
-            {totalConferencingUsers}
-          </span>
         </div>
       </header>
 
