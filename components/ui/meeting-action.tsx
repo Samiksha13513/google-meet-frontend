@@ -25,8 +25,6 @@ export function MeetingActions() {
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const [showShareDetails, setShowShareDetails] = useState(false);
-
   const [joining, setJoining] = useState(false);
   const [creatingLater, setCreatingLater] = useState(false);
   const [scheduling, setScheduling] = useState(false);
@@ -283,59 +281,6 @@ export function MeetingActions() {
           </button>
         </div>
 
-        {/* Share full details */}
-        <button
-          onClick={() => setShowShareDetails((s) => !s)}
-          className="mt-8 flex items-center gap-3 text-[#1a73e8] hover:underline"
-          type="button"
-        >
-          <svg
-            width="18"
-            height="18"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth="2"
-          >
-            <circle cx="18" cy="5" r="3" />
-            <circle cx="6" cy="12" r="3" />
-            <circle cx="18" cy="19" r="3" />
-            <path d="M8.59 13.51L15.42 17.49M15.41 6.51L8.59 10.49" />
-          </svg>
-
-          <span className="text-[16px]">Share full details</span>
-        </button>
-
-        {showShareDetails && (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-white p-4 text-[#202124] shadow-sm">
-            <p className="text-sm text-[#5f6368]">Share this meeting's full joining details with participants.</p>
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <div className="max-w-[70%] break-all text-[15px] text-[#202124]">{meetingLink}</div>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCopyMeetingLink}
-                  className="rounded-full p-2 text-[#5f6368] hover:bg-black/5"
-                >
-                  <Copy size={18} />
-                </button>
-                <button
-                  onClick={() => {
-                    if ((navigator as any).share) {
-                      void (navigator as any).share({ title: 'Meeting', text: meetingLink, url: meetingLink });
-                    } else {
-                      void navigator.clipboard.writeText(meetingLink || '');
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 1600);
-                    }
-                  }}
-                  className="rounded-full bg-[#1a73e8] px-3 py-2 text-white"
-                >
-                  Share
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   </div>

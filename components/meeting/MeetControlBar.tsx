@@ -168,19 +168,16 @@ export function MeetControlBar({
               aria-label={isMicOn ? "Turn off microphone" : "Turn on microphone"}
               aria-pressed={isMicOn}
             >
-              {isMicOn ? (
-                localMicLevel > 0.04 ? (
+              <span className="flex items-center justify-center gap-1">
+                {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+                {isMicOn && (
                   <VoiceActivityIndicator
                     level={localMicLevel}
                     size="sm"
                     variant="inline"
                   />
-                ) : (
-                  <Mic className="h-5 w-5" />
-                )
-              ) : (
-                <MicOff className="h-5 w-5" />
-              )}
+                )}
+              </span>
             </button>
             <span className="meet-split-divider" aria-hidden />
             <button

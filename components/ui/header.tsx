@@ -117,12 +117,6 @@ export function Header({ onMenuClick, isSidebarOpen = true }: HeaderProps) {
           {currentTime} &bull; {currentDate}
         </span>
 
-        {displayName && (
-          <div className="hidden min-w-0 text-right leading-tight lg:block">
-            <p className="max-w-36 truncate text-sm font-medium text-[#202124]">{displayName}</p>
-          </div>
-        )}
-
         <Avatar
           className={cn("ml-1 h-8 w-8 cursor-pointer bg-[#0b8043]")}
           title={displayName || "Account"}
