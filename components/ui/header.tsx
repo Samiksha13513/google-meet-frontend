@@ -117,7 +117,7 @@ export function Header({ onMenuClick, isSidebarOpen = true }: HeaderProps) {
           {currentTime} &bull; {currentDate}
         </span>
 
-        <Avatar
+        {/* <Avatar
           className={cn("ml-1 h-8 w-8 cursor-pointer bg-[#0b8043]")}
           title={displayName || "Account"}
         >
@@ -127,7 +127,7 @@ export function Header({ onMenuClick, isSidebarOpen = true }: HeaderProps) {
           <AvatarFallback className="bg-[#0b8043] text-sm font-medium text-white">
             {fallbackInitial}
           </AvatarFallback>
-        </Avatar>
+        </Avatar> */}
       </div>
     </header>
   );
