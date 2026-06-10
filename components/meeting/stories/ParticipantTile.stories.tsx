@@ -8,7 +8,7 @@ const meta = {
     participant: {
       id: "participant-1",
       meetingId: "meeting-1",
-      displayName: "Samiksha Yadav",
+      displayName: "",
       role: "HOST",
       status: "JOINED",
       micEnabled: false,

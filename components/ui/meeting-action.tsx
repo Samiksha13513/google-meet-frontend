@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createMeeting, getMeetingByCode } from "@/lib/api";
+import { buildMeetingLink } from "@/lib/meet-link";
 import { googleLogin } from "@/services/auth";
 
 export function MeetingActions() {
@@ -45,9 +46,6 @@ export function MeetingActions() {
 
   const getMeetingCode = (data: any) =>
     (data as any)?.meeting?.meetingCode || (data as any)?.meetingCode || (data as any)?.code;
-
-  const buildMeetingLink = (code: string) =>
-    `${window.location.origin}/meeting/${code}`;
 
   const handleCopyMeetingLink = async () => {
     if (!meetingLink) return;

@@ -106,15 +106,15 @@ export function PeoplePanel({
       </div>
 
       <div className="px-5 pb-4">
-        <button
-          type="button"
-          className="flex h-10 items-center gap-2 rounded-full bg-[#041e49] px-4 text-sm font-medium text-white transition-colors duration-[150ms] hover:bg-[#062a66]"
-        >
-          <UserPlus className="h-[18px] w-[18px]" />
-          Add people
-        </button>
+        {/* <button */}
+          {/* type="button" */}
+          {/* className="flex h-10 items-center gap-2 rounded-full bg-[#041e49] px-4 text-sm font-medium text-white transition-colors duration-[150ms] hover:bg-[#062a66]" */}
+        {/* > */}
+          {/* <UserPlus className="h-[18px] w-[18px]" /> */}
+          {/* Add people */}
+        {/* </button> */}
 
-        <div className="mt-4 flex h-11 items-center gap-2 rounded-lg border border-[#3c4043] bg-transparent px-3">
+        {/* <div className="mt-4 flex h-11 items-center gap-2 rounded-lg border border-[#3c4043] bg-transparent px-3">
           <Search className="h-[18px] w-[18px] shrink-0 text-[#9aa0a6]" />
           <input
             type="text"
@@ -123,7 +123,7 @@ export function PeoplePanel({
             placeholder="Search for people"
             className="w-full bg-transparent text-sm text-white outline-none placeholder:text-[#9aa0a6]"
           />
-        </div>
+        </div> */}
       </div>
 
       <div className="flex-1 overflow-y-auto px-5 pb-6">
@@ -255,8 +255,8 @@ export function PeoplePanel({
                   </div>
                   <span className="flex gap-1 text-white/50">
                     {isLocalHandRaised && <Hand className="h-4 w-4 text-[#81c995]" />}
-                    {isLocalMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
-                    {isLocalCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
+                    {/* {isLocalMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />} */}
+                    {/* {isLocalCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />} */}
                   </span>
                 </div>
 

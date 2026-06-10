@@ -49,6 +49,7 @@ import {
   type UserIdentity,
 } from "@/lib/display-name";
 import { getMeetingByCode } from "@/lib/api";
+import { buildMeetingLink } from "@/lib/meet-link";
 import type { Meeting } from "@/types/meeting";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮"];
@@ -1537,7 +1538,7 @@ export default function MeetingRoom() {
       }
 
       const localLevel = audioLevelsRef.current.local || 0;
-      if (Math.abs(localLevel - localMicLevelRef.current) > 0.015) {
+      if (Math.abs(localLevel - localMicLevelRef.current) > 0.008) {
         localMicLevelRef.current = localLevel;
         setLocalMicLevel(localLevel);
       }
@@ -2023,7 +2024,7 @@ export default function MeetingRoom() {
           <button
             type="button"
             onClick={() => {
-              setParticipantLeftMessage(`Meeting Link: ${window.location.origin}/meeting/${meetingCode}`);
+              setParticipantLeftMessage(`Meeting Link: ${buildMeetingLink(meetingCode || "")}`);
               window.setTimeout(() => setParticipantLeftMessage(null), 5000);
             }}
             className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10"
@@ -2678,7 +2679,7 @@ export default function MeetingRoom() {
           setShowChat(false);
         }}
         onShowMeetingDetails={() => {
-          setParticipantLeftMessage(`Meeting Link: ${window.location.origin}/meeting/${meetingCode}`);
+          setParticipantLeftMessage(`Meeting Link: ${buildMeetingLink(meetingCode || "")}`);
           window.setTimeout(() => setParticipantLeftMessage(null), 5000);
         }}
         onLeave={() => setShowLeaveDialog(true)}

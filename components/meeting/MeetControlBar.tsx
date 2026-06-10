@@ -145,10 +145,7 @@ export function MeetControlBar({
       </div>
 
       <div className="mx-auto flex max-w-full items-center gap-1 overflow-x-auto px-1 no-scrollbar sm:gap-1.5">
-        <div className="relative flex shrink-0 items-center gap-1" ref={audioDeviceMenuRef}>
-          {isMicOn && localMicLevel > 0.04 && (
-            <VoiceActivityIndicator level={localMicLevel} size="sm" />
-          )}
+        <div className="relative shrink-0" ref={audioDeviceMenuRef}>
           <div className="meet-split-control">
             <button
               type="button"
@@ -171,7 +168,19 @@ export function MeetControlBar({
               aria-label={isMicOn ? "Turn off microphone" : "Turn on microphone"}
               aria-pressed={isMicOn}
             >
-              {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+              {isMicOn ? (
+                localMicLevel > 0.04 ? (
+                  <VoiceActivityIndicator
+                    level={localMicLevel}
+                    size="sm"
+                    variant="inline"
+                  />
+                ) : (
+                  <Mic className="h-5 w-5" />
+                )
+              ) : (
+                <MicOff className="h-5 w-5" />
+              )}
             </button>
             <span className="meet-split-divider" aria-hidden />
             <button

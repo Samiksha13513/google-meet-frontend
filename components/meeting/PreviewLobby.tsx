@@ -18,7 +18,7 @@ import { googleLogin } from "@/services/auth";
 import Image from "next/image";
 import { useMeetingStore } from "@/store/meeting-store";
 import { socket } from "@/lib/socket";
-import { LobbyMicIndicator } from "@/components/meeting/LobbyMicIndicator";
+import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { SelfieBackgroundEffect } from "@/webrtc/selfie-effects";
 
@@ -173,10 +173,7 @@ function PreviewControls({
 }) {
   return (
     <>
-      <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-3">
-        {isMicOn && micLevel > 0.04 && (
-          <LobbyMicIndicator isMicOn={isMicOn} level={micLevel} />
-        )}
+      <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4">
         <button
           type="button"
           onClick={onToggleMic}
@@ -186,7 +183,15 @@ function PreviewControls({
             isMicOn ? "meet-lobby-control-on" : "meet-lobby-control-off",
           ].join(" ")}
         >
-          {isMicOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
+          {isMicOn ? (
+            micLevel > 0.04 ? (
+              <VoiceActivityIndicator level={micLevel} size="md" variant="inline" />
+            ) : (
+              <Mic className="h-6 w-6" />
+            )
+          ) : (
+            <MicOff className="h-6 w-6" />
+          )}
         </button>
 
         <button
