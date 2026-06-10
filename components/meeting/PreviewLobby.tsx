@@ -451,14 +451,14 @@ export function PreviewLobby({
           </button>
         ) : (
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#8e24aa] text-base font-medium text-white">
+            {/* <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-[#8e24aa] text-base font-medium text-white">
               {image ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={image} alt={label} className="h-full w-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 initial
               )}
-            </div>
+            </div> */}
           </div>
         )}
       </header>
