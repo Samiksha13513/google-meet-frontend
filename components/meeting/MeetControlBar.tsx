@@ -147,7 +147,7 @@ export function MeetControlBar({
       <div className="mx-auto flex max-w-full items-center gap-1 overflow-x-auto px-1 no-scrollbar sm:gap-1.5">
         <div className="relative shrink-0" ref={audioDeviceMenuRef}>
           <div className="meet-split-control">
-            <button
+            {/* <button
               type="button"
               onClick={() => {
                 closeOtherMenus("audio");
@@ -158,7 +158,7 @@ export function MeetControlBar({
               aria-label="Microphone settings"
             >
               <MoreHorizontal className="h-4 w-4" />
-            </button>
+            </button> */}
             <span className="meet-split-divider" aria-hidden />
             <button
               type="button"
