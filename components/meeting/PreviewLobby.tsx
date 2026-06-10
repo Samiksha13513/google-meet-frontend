@@ -451,9 +451,9 @@ export function PreviewLobby({
         <Image
           src={MEET_LOGO_URL}
           alt="Google Meet"
-          width={99}
+          width={176}
           height={32}
-          className="h-8 w-[99px] object-contain"
+          className="h-8 w-[176px] object-contain"
           priority
         />
         {!isAuthenticated ? (

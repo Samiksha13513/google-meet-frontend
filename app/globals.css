@@ -233,6 +233,75 @@ body {
   background-color: #c5221f;
 }
 
+.meet-split-control {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  border-radius: 9999px;
+  background-color: #3c4043;
+  color: #fff;
+  overflow: hidden;
+}
+
+@media (min-width: 640px) {
+  .meet-split-control {
+    height: 48px;
+  }
+}
+
+.meet-split-control-pill {
+  justify-content: center;
+}
+
+.meet-split-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  transition: background-color 150ms ease;
+}
+
+.meet-split-btn:hover:not(:disabled) {
+  background-color: #4f5357;
+}
+
+.meet-split-divider {
+  width: 1px;
+  height: 22px;
+  background-color: rgba(255, 255, 255, 0.12);
+  flex-shrink: 0;
+}
+
+.meet-leave-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  min-width: 56px;
+  padding: 0 18px;
+  border-radius: 9999px;
+  background-color: #ea4335;
+  color: #fff;
+  transition: background-color 150ms ease;
+}
+
+@media (min-width: 640px) {
+  .meet-leave-btn {
+    height: 48px;
+    min-width: 64px;
+    padding: 0 22px;
+  }
+}
+
+.meet-leave-btn:hover:not(:disabled) {
+  background-color: #c5221f;
+}
+
+.meet-leave-btn:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
 /* Lobby preview circular device controls */
 .meet-lobby-control {
   display: flex;

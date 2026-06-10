@@ -7,12 +7,8 @@ import {
   Video,
   VideoOff,
   MonitorUp,
-  Smile,
-  Hand,
-  Phone,
   Info,
   MessageSquare,
-  Users,
   Send,
   X,
   Shield,
@@ -22,10 +18,7 @@ import {
   Rows3,
   Pin,
   PinOff,
-  Captions,
-  MoreVertical,
   Lock,
-  Sparkles,
 } from "lucide-react";
 
 import { useParams, useRouter } from "next/navigation";
@@ -42,7 +35,11 @@ import { PreviewLobby } from "@/components/meeting/PreviewLobby";
 import { GuestWaitingLobby } from "@/components/meeting/GuestWaitingLobby";
 import { AdmitGuestControl } from "@/components/meeting/AdmitGuestControl";
 import { HandRaisedBadge } from "@/components/meeting/HandRaisedBadge";
+import { HandLowerToast } from "@/components/meeting/HandLowerToast";
+import { MeetControlBar } from "@/components/meeting/MeetControlBar";
+import { MeetPersonAvatar } from "@/components/meeting/MeetPersonAvatar";
 import { PeoplePanel } from "@/components/meeting/PeoplePanel";
+import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import {
   getCurrentUserIdentity,
   getDisplayInitial,
@@ -330,6 +327,9 @@ export default function MeetingRoom() {
   const [isCameraOn, setIsCameraOn] = useState(true);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
+  const [handLowerPrompt, setHandLowerPrompt] = useState(false);
+  const [showCaptions, setShowCaptions] = useState(false);
+  const [audioUiTick, setAudioUiTick] = useState(0);
 
   const [isHost, setIsHost] = useState(false);
   const [meetingError, setMeetingError] = useState<string | null>(null);
@@ -402,6 +402,8 @@ export default function MeetingRoom() {
   const audioMonitorsRef = useRef<Map<string, () => void>>(new Map());
   const audioMonitorKeysRef = useRef<Map<string, string>>(new Map());
   const activeSpeakerRef = useRef<string | null>(null);
+  const keepHandRaisedRef = useRef(false);
+  const handRaiseTimersRef = useRef<{ prompt?: number; lower?: number }>({});
 
   const emojiRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -455,11 +457,25 @@ export default function MeetingRoom() {
     delete audioLevelsRef.current[socketId];
   };
 
+  const clearHandRaiseTimers = () => {
+    if (handRaiseTimersRef.current.prompt) {
+      window.clearTimeout(handRaiseTimersRef.current.prompt);
+    }
+    if (handRaiseTimersRef.current.lower) {
+      window.clearTimeout(handRaiseTimersRef.current.lower);
+    }
+    handRaiseTimersRef.current = {};
+  };
+
   const resetInMeetingUiState = () => {
     setPinnedParticipantId(null);
     setActiveSpeakerId(null);
     setIsScreenSharing(false);
     setIsHandRaised(false);
+    setHandLowerPrompt(false);
+    setShowCaptions(false);
+    keepHandRaisedRef.current = false;
+    clearHandRaiseTimers();
     setScreenShareError(null);
     setShowChat(false);
     setUnreadMessages(0);
@@ -673,6 +689,30 @@ export default function MeetingRoom() {
     stream?.getVideoTracks().forEach((t) => (t.enabled = next));
     setIsCameraOn(next);
     sessionRef.current?.sendStatusUpdate(isMicOn, next);
+  };
+
+  const lowerHand = () => {
+    setIsHandRaised(false);
+    sessionRef.current?.sendRaiseHandUpdate(false);
+    setHandLowerPrompt(false);
+    keepHandRaisedRef.current = false;
+    clearHandRaiseTimers();
+  };
+
+  const handleToggleHandRaise = () => {
+    if (isHandRaised) {
+      lowerHand();
+      return;
+    }
+    keepHandRaisedRef.current = false;
+    setIsHandRaised(true);
+    sessionRef.current?.sendRaiseHandUpdate(true);
+  };
+
+  const handleKeepHandRaised = () => {
+    keepHandRaisedRef.current = true;
+    setHandLowerPrompt(false);
+    clearHandRaiseTimers();
   };
 
   const endScreenShare = async () => {
@@ -1476,6 +1516,7 @@ export default function MeetingRoom() {
         activeSpeakerRef.current = maxId;
         setActiveSpeakerId(maxId);
       }
+      setAudioUiTick((tick) => tick + 1);
     }, 320);
 
     return () => {
@@ -1483,6 +1524,62 @@ export default function MeetingRoom() {
       window.clearInterval(activeTimer);
     };
   }, [meetingState]);
+
+  useEffect(() => {
+    if (meetingState !== "inMeeting" || !isHandRaised || keepHandRaisedRef.current) {
+      clearHandRaiseTimers();
+      if (!isHandRaised) {
+        setHandLowerPrompt(false);
+      }
+      return;
+    }
+
+    clearHandRaiseTimers();
+    handRaiseTimersRef.current.prompt = window.setTimeout(() => {
+      setHandLowerPrompt(true);
+      handRaiseTimersRef.current.lower = window.setTimeout(() => {
+        if (!keepHandRaisedRef.current) {
+          lowerHand();
+        }
+      }, 4000);
+    }, 5000);
+
+    return () => {
+      clearHandRaiseTimers();
+    };
+  }, [meetingState, isHandRaised]);
+
+  useEffect(() => {
+    if (meetingState !== "inMeeting") return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.ctrlKey && event.key.toLowerCase() === "d") {
+        event.preventDefault();
+        handleToggleMic();
+      }
+      if (event.ctrlKey && event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        handleToggleCamera();
+      }
+      if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "h") {
+        event.preventDefault();
+        handleToggleHandRaise();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [meetingState, isHandRaised, isMicOn, isCameraOn]);
 
   useEffect(() => {
     if (meetingState !== "inMeeting") {
@@ -1671,7 +1768,6 @@ export default function MeetingRoom() {
       { id: "spotlight", label: "Spotlight", icon: Pin },
       { id: "sidebar", label: "Sidebar", icon: PanelRight },
     ];
-  const activeLayout = layoutOptions.find((option) => option.id === meetingLayout) || layoutOptions[0];
   const hasVisibleVideo = (
     stream: MediaStream | undefined,
     cameraOn: boolean,
@@ -1775,9 +1871,9 @@ export default function MeetingRoom() {
 
   const renderTileBadges = (props: any) => {
     const { id, name, host, handRaised, micOn, screenSharing, compact = false } = props;
+    void audioUiTick;
     const level = audioLevelsRef.current[id] || 0;
     const showActivity = micOn && level > 0.04;
-    const activityScale = Math.min(1.6, 0.6 + level * 2.5);
 
     return (
       <>
@@ -1788,32 +1884,12 @@ export default function MeetingRoom() {
           />
         )}
 
-        {/* Mic activity indicator */}
-        {showActivity && !handRaised && (
+        {showActivity && (
           <div
+            className={`absolute ${compact ? "top-2 left-2" : "top-4 left-4"} z-10`}
             aria-hidden
-            className={`absolute ${compact ? "top-2 left-2" : "top-4 left-4"} z-10 flex items-center justify-center`}
-            style={{
-              width: compact ? 18 : 22,
-              height: compact ? 18 : 22,
-            }}
           >
-            <span
-              className="absolute rounded-full bg-[rgba(52,168,83,0.18)]"
-              style={{
-                width: (compact ? 18 : 22) * activityScale,
-                height: (compact ? 18 : 22) * activityScale,
-                transform: `translate(-50%,-50%)`,
-                left: 6,
-                top: 6,
-                transition: "width 160ms linear, height 160ms linear, opacity 160ms linear",
-                opacity: Math.min(1, 0.35 + level * 1.2),
-              }}
-            />
-            <span
-              className="relative z-20 block rounded-full bg-[#34A853]"
-              style={{ width: compact ? 10 : 12, height: compact ? 10 : 12 }}
-            />
+            <VoiceActivityIndicator level={level} size={compact ? "sm" : "md"} />
           </div>
         )}
 
@@ -1866,8 +1942,6 @@ export default function MeetingRoom() {
       )}
     </div>
   );
-  const ActiveLayoutIcon = activeLayout.icon;
-
   // Participant status text (Google Meet-like)
   const formatParticipantNames = (items: Participant[]) => {
     const names = items.map((p) => p.displayName || "Participant");
@@ -1918,27 +1992,49 @@ export default function MeetingRoom() {
       {/* Top bar */}
       <header className="relative z-30 flex h-12 shrink-0 items-center justify-between border-b border-white/5 px-3 sm:px-4">
         <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-          <span className="hidden truncate text-sm font-medium text-white/90 sm:block">
-            {meetingData?.title || "Meeting"}
-          </span>
-          <span className="hidden h-4 w-px bg-white/15 sm:block" />
-          <span className="font-mono text-xs tracking-wider text-[#8ab4f8] sm:text-sm">{meetingCode}</span>
-          <span className="hidden text-xs text-white/50 sm:inline">{meetingDuration}</span>
+          <span className="text-sm text-white/90">{currentTime}</span>
+          <span className="h-4 w-px bg-white/15" />
+          <span className="font-mono text-xs tracking-wider text-white/90 sm:text-sm">{meetingCode}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setParticipantLeftMessage(`Meeting Link: ${window.location.origin}/meeting/${meetingCode}`);
+              window.setTimeout(() => setParticipantLeftMessage(null), 5000);
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10"
+            title="Meeting details"
+            aria-label="Meeting details"
+          >
+            <Info className="h-4 w-4" />
+          </button>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          {isHost && (
-            <span className="hidden items-center gap-1 rounded-full bg-yellow-400/10 px-2 py-0.5 text-[11px] font-medium text-yellow-300 sm:inline-flex">
-              <Shield className="h-3 w-3" />
-              Host
-            </span>
+          {isHandRaised && (
+            <div className="hidden sm:block">
+              <HandRaisedBadge name={resolvedDisplayName} compact />
+            </div>
           )}
-          {isMeetingLocked && isHost && (
-            <span className="hidden items-center gap-1 rounded-full bg-white/8 px-2 py-0.5 text-[11px] text-white/70 sm:inline-flex">
-              <Lock className="h-3 w-3" />
-              Locked
+          <button
+            type="button"
+            onClick={() => {
+              setShowParticipantsList(true);
+              setShowChat(false);
+            }}
+            className="relative flex items-center"
+            title="Show everyone"
+            aria-label="Show everyone"
+          >
+            <MeetPersonAvatar
+              name={resolvedDisplayName}
+              email={isAuthenticated ? identity.email : undefined}
+              image={isAuthenticated ? identity.image : undefined}
+              size="xs"
+            />
+            <span className="absolute -bottom-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#3c4043] px-1 text-[10px] font-medium text-white ring-2 ring-[#202124]">
+              {totalConferencingUsers}
             </span>
-          )}
+          </button>
         </div>
       </header>
 
@@ -1980,8 +2076,12 @@ export default function MeetingRoom() {
         </div>
       </div>
 
+      {handLowerPrompt && isHandRaised && (
+        <HandLowerToast onKeepRaised={handleKeepHandRaised} />
+      )}
+
       {/* Main video area — grid or presenter layout */}
-      <div className="flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 min-h-0">
+      <div className="relative flex-1 flex overflow-hidden p-2 sm:p-3 gap-2 sm:gap-3 min-h-0">
         <div className="flex-1 flex flex-col justify-center min-h-0 min-w-0">
           {useStageLayout ? (
             <div
@@ -2411,6 +2511,10 @@ export default function MeetingRoom() {
             isLocalCameraOn={isCameraOn}
             isLocalHandRaised={isHandRaised}
             isLocalActiveSpeaker={activeSpeakerId === "local"}
+            localMicLevel={audioUiTick >= 0 ? audioLevelsRef.current.local || 0 : 0}
+            getParticipantMicLevel={(socketId) =>
+              audioUiTick >= 0 ? audioLevelsRef.current[socketId] || 0 : 0
+            }
             joinRequests={joinRequests}
             participants={filteredParticipants}
             searchQuery={participantSearch}
@@ -2486,288 +2590,90 @@ export default function MeetingRoom() {
         </div>
       )}
 
-      {/* Control Actions Bar */}
-      <div className="min-h-[72px] bg-[#202124] flex items-center justify-between px-2 sm:px-4 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] border-t border-white/5 relative z-40 gap-2">
-        {/* Time and room details */}
-        <div className="hidden lg:flex flex-col text-xs font-light text-white/55 min-w-[80px]">
-          <span>{currentTime}</span>
-          <span className="text-[#8ab4f8] mt-0.5 font-mono tracking-wider">{meetingDuration}</span>
-        </div>
-
-        {/* Media Buttons */}
-        <div className="flex items-center gap-1.5 sm:gap-2 mx-auto overflow-x-auto no-scrollbar px-1 max-w-full">
-          {/* Audio */}
-          <div className="relative" ref={audioDeviceMenuRef}>
-            <button
-              onClick={handleToggleMic}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setShowAudioDeviceMenu((prev) => !prev);
-                setShowVideoDeviceMenu(false);
-                setShowEmojiPicker(false);
-                setShowLayoutMenu(false);
-                setShowMoreOptionsMenu(false);
-              }}
-              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isMicOn ? "meet-control-btn-neutral" : "meet-control-btn-danger"}`}
-              title={isMicOn ? "Mute microphone" : "Unmute microphone"}
-            >
-              {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-            </button>
-            {showAudioDeviceMenu && (
-              <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
-                {renderDeviceList(
-                  "Microphone",
-                  audioInputDevices,
-                  selectedAudioInputId,
-                  "Microphone",
-                  // eslint-disable-next-line react-hooks/refs
-                  handleSelectAudioInput
-                )}
-                <div className="my-2 h-px bg-white/10" />
-                {renderDeviceList(
-                  "Speaker",
-                  audioOutputDevices,
-                  selectedAudioOutputId,
-                  "Speaker",
-                  handleSelectAudioOutput
-                )}
-              </div>
+      <MeetControlBar
+        currentTime={currentTime}
+        meetingDuration={meetingDuration}
+        isMicOn={isMicOn}
+        isCameraOn={isCameraOn}
+        isScreenSharing={isScreenSharing}
+        isHandRaised={isHandRaised}
+        isHost={isHost}
+        isMeetingLocked={isMeetingLocked}
+        showCaptions={showCaptions}
+        showChat={showChat}
+        showParticipantsList={showParticipantsList}
+        unreadMessages={unreadMessages}
+        screenShareSupported={screenShareSupport?.supported ?? true}
+        screenShareReason={screenShareSupport?.reason}
+        meetingLayout={meetingLayout}
+        layoutOptions={layoutOptions}
+        showAudioDeviceMenu={showAudioDeviceMenu}
+        showVideoDeviceMenu={showVideoDeviceMenu}
+        showEmojiPicker={showEmojiPicker}
+        showLayoutMenu={showLayoutMenu}
+        showMoreOptionsMenu={showMoreOptionsMenu}
+        audioDeviceMenu={
+          <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+            {renderDeviceList(
+              "Microphone",
+              audioInputDevices,
+              selectedAudioInputId,
+              "Microphone",
+              handleSelectAudioInput
+            )}
+            <div className="my-2 h-px bg-white/10" />
+            {renderDeviceList(
+              "Speaker",
+              audioOutputDevices,
+              selectedAudioOutputId,
+              "Speaker",
+              handleSelectAudioOutput
             )}
           </div>
-
-          {/* Camera */}
-          <div className="relative" ref={videoDeviceMenuRef}>
-            <button
-              onClick={handleToggleCamera}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setShowVideoDeviceMenu((prev) => !prev);
-                setShowAudioDeviceMenu(false);
-                setShowEmojiPicker(false);
-                setShowLayoutMenu(false);
-                setShowMoreOptionsMenu(false);
-              }}
-              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isCameraOn ? "meet-control-btn-neutral" : "meet-control-btn-danger"}`}
-              title={isCameraOn ? "Turn off camera" : "Turn on camera"}
-            >
-              {isCameraOn ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
-            </button>
-            {showVideoDeviceMenu && (
-              <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
-                {renderDeviceList(
-                  "Camera",
-                  videoInputDevices,
-                  selectedVideoInputId,
-                  "Camera",
-                  // eslint-disable-next-line react-hooks/refs
-                  handleSelectVideoInput
-                )}
-              </div>
+        }
+        videoDeviceMenu={
+          <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+            {renderDeviceList(
+              "Camera",
+              videoInputDevices,
+              selectedVideoInputId,
+              "Camera",
+              handleSelectVideoInput
             )}
           </div>
-
-          {/* Captions (placeholder) */}
-          <button
-            type="button"
-            disabled
-            className="meet-control-btn meet-control-btn-neutral h-11 w-11 sm:h-12 sm:w-12 opacity-40"
-            title="Turn on captions"
-          >
-            <Captions className="h-5 w-5" />
-          </button>
-
-          {/* Raise Hand */}
-          <button
-            type="button"
-            onClick={() => {
-              const next = !isHandRaised;
-              setIsHandRaised(next);
-              sessionRef.current?.sendRaiseHandUpdate(next);
-            }}
-            className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isHandRaised ? "bg-yellow-400 text-[#202124] hover:bg-yellow-500" : "meet-control-btn-neutral"}`}
-            title="Raise hand"
-          >
-            <Hand className="h-5 w-5" />
-          </button>
-
-          {/* Present Now / Screen Share */}
-          <button
-            type="button"
-            onClick={() => void handleToggleScreenShare()}
-            disabled={!isScreenSharing && screenShareSupport !== null && !screenShareSupport.supported}
-            className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isScreenSharing ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
-            title={
-              isScreenSharing
-                ? "Stop presenting"
-                : screenShareSupport && !screenShareSupport.supported
-                  ? screenShareSupport.reason
-                  : "Present now"
-            }
-          >
-            <MonitorUp className="h-5 w-5" />
-          </button>
-
-          {/* More options */}
-          <div className="relative" ref={moreOptionsRef}>
-            <button
-              type="button"
-              onClick={() => {
-                setShowMoreOptionsMenu((prev) => !prev);
-                setShowLayoutMenu(false);
-                setShowEmojiPicker(false);
-                setShowAudioDeviceMenu(false);
-                setShowVideoDeviceMenu(false);
-              }}
-              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${showMoreOptionsMenu ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
-              title="More options"
-            >
-              <MoreVertical className="h-5 w-5" />
-            </button>
-            {showMoreOptionsMenu && (
-              <div className="fixed bottom-20 left-1/2 z-[60] w-56 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
-                <div className="relative" ref={layoutRef}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowLayoutMenu((prev) => !prev);
-                      setShowEmojiPicker(false);
-                    }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
-                  >
-                    <ActiveLayoutIcon className="h-4 w-4 shrink-0" />
-                    <span>Layout: {activeLayout.label}</span>
-                  </button>
-                  {showLayoutMenu && (
-                    <div className="mt-1 border-t border-white/10 pt-1">
-                      {layoutOptions.map((option) => {
-                        const LayoutIcon = option.icon;
-                        return (
-                          <button
-                            key={option.id}
-                            type="button"
-                            onClick={() => handleLayoutChange(option.id)}
-                            className={[
-                              "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition-colors",
-                              meetingLayout === option.id
-                                ? "bg-[#8ab4f8] text-[#202124]"
-                                : "text-white/85 hover:bg-white/10",
-                            ].join(" ")}
-                          >
-                            <LayoutIcon className="h-4 w-4 shrink-0" />
-                            <span>{option.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <div className="relative mt-1 border-t border-white/10 pt-1" ref={emojiRef}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowEmojiPicker((prev) => !prev);
-                      setShowLayoutMenu(false);
-                    }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
-                  >
-                    <Smile className="h-4 w-4 shrink-0" />
-                    <span>Send a reaction</span>
-                  </button>
-                  {showEmojiPicker && (
-                    <div className="mt-2 flex flex-wrap justify-center gap-1 px-1">
-                      {REACTIONS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          type="button"
-                          onClick={() => handleReaction(emoji)}
-                          className="flex h-9 w-9 items-center justify-center rounded-full text-xl transition-all duration-150 hover:scale-110 hover:bg-white/10"
-                          title={`Send ${emoji}`}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                {isHost && (
-                  <button
-                    type="button"
-                    onClick={() => setIsMeetingLocked((prev) => !prev)}
-                    className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
-                  >
-                    <Lock className="h-4 w-4 shrink-0" />
-                    <span>{isMeetingLocked ? "Unlock meeting" : "Lock meeting"}</span>
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Leave call — red circular */}
-          <button
-            type="button"
-            onClick={() => setShowLeaveDialog(true)}
-            className="meet-control-btn meet-control-btn-danger h-11 w-11 sm:h-12 sm:w-12 shrink-0"
-            title="Leave call"
-          >
-            <Phone className="h-5 w-5 rotate-[135deg]" />
-          </button>
-        </div>
-
-        {/* Sidebar Toggles */}
-        <div className="flex items-center gap-0.5 sm:gap-1 text-white/70 shrink-0">
-          {/* Info toggle */}
-          <button
-            onClick={() => {
-              setParticipantLeftMessage(`Meeting Link: ${window.location.origin}/meeting/${meetingCode}`);
-              setTimeout(() => setParticipantLeftMessage(null), 5000);
-            }}
-            className="meet-control-btn h-10 w-10 sm:h-11 sm:w-11 hover:bg-white/5"
-            title="Meeting details"
-          >
-            <Info className="h-5 w-5" />
-          </button>
-
-          {/* Chat Sidebar button */}
-          <button
-            onClick={() => {
-              setShowChat((prev) => !prev);
-              setShowParticipantsList(false);
-            }}
-            className={`meet-control-btn relative h-10 w-10 sm:h-11 sm:w-11 ${showChat ? "meet-control-btn-active" : "hover:bg-white/5"}`}
-            title="Chat messages"
-          >
-            <MessageSquare className="h-5 w-5" />
-            {!showChat && unreadMessages > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-[#8ab4f8] px-1 text-[11px] font-medium text-[#202124] ring-2 ring-[#202124]">
-                {unreadMessages > 9 ? "9+" : unreadMessages}
-              </span>
-            )}
-          </button>
-
-          {/* Participants Sidebar button */}
-          <button
-            onClick={() => {
-              setShowParticipantsList(!showParticipantsList);
-              setShowChat(false);
-            }}
-            className={`meet-control-btn h-10 w-10 sm:h-11 sm:w-11 ${showParticipantsList ? "meet-control-btn-active" : "hover:bg-white/5"}`}
-            title="Show participants"
-          >
-            <Users className="h-5 w-5" />
-          </button>
-
-          {/* Activities (placeholder) */}
-          <button
-            type="button"
-            disabled
-            className="meet-control-btn h-10 w-10 sm:h-11 sm:w-11 opacity-40 hidden sm:flex"
-            title="Activities"
-          >
-            <Sparkles className="h-5 w-5" />
-          </button>
-        </div>
-      </div>
+        }
+        onToggleMic={handleToggleMic}
+        onToggleCamera={handleToggleCamera}
+        onToggleScreenShare={() => void handleToggleScreenShare()}
+        onToggleHandRaise={handleToggleHandRaise}
+        onToggleCaptions={() => setShowCaptions((prev) => !prev)}
+        onToggleChat={() => {
+          setShowChat((prev) => !prev);
+          setShowParticipantsList(false);
+        }}
+        onToggleParticipants={() => {
+          setShowParticipantsList((prev) => !prev);
+          setShowChat(false);
+        }}
+        onShowMeetingDetails={() => {
+          setParticipantLeftMessage(`Meeting Link: ${window.location.origin}/meeting/${meetingCode}`);
+          window.setTimeout(() => setParticipantLeftMessage(null), 5000);
+        }}
+        onLeave={() => setShowLeaveDialog(true)}
+        onReaction={handleReaction}
+        onLayoutChange={handleLayoutChange}
+        onToggleMeetingLock={() => setIsMeetingLocked((prev) => !prev)}
+        setShowAudioDeviceMenu={setShowAudioDeviceMenu}
+        setShowVideoDeviceMenu={setShowVideoDeviceMenu}
+        setShowEmojiPicker={setShowEmojiPicker}
+        setShowLayoutMenu={setShowLayoutMenu}
+        setShowMoreOptionsMenu={setShowMoreOptionsMenu}
+        audioDeviceMenuRef={audioDeviceMenuRef}
+        videoDeviceMenuRef={videoDeviceMenuRef}
+        emojiRef={emojiRef}
+        layoutRef={layoutRef}
+        moreOptionsRef={moreOptionsRef}
+      />
     </div>
   );
 }

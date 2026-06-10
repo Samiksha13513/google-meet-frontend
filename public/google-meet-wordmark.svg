@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 40" role="img" aria-label="Google Meet">
+  <g transform="translate(2,4)">
+    <rect x="2" y="8" width="22" height="16" rx="3" fill="#FABB05"/>
+    <polygon points="24,10 30,6 30,26 24,22" fill="#FABB05"/>
+    <circle cx="10" cy="20" r="3" fill="#FFFFFF"/>
+  </g>
+  <text x="42" y="27" font-family="'Google Sans','Roboto',Arial,sans-serif" font-size="20" font-weight="400" fill="#3C4043">Google Meet</text>
+</svg>
