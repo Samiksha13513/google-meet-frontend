@@ -509,7 +509,7 @@ export function PreviewLobby({
                   value={customDisplayName}
                   onChange={(e) => onCustomDisplayNameChange(e.target.value)}
                   placeholder="Your name"
-              autoComplete="name"
+                  autoComplete="name"
                   className="meet-guest-input w-full"
                   maxLength={60}
                 />
@@ -541,3 +541,4 @@ export function PreviewLobby({
     </div>
   );
 }
+
