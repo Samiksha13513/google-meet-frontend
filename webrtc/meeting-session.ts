@@ -188,7 +188,7 @@ export class MeetingPeerSession {
     for (const [socketId, peer] of this.peers.entries()) {
       if (peer.connectionState === "closed") continue;
       try {
-        const sender = peer.getSenders().find((s) => s.track?.kind === kind);
+        const sender = this.getSenderByKind(peer, kind);
         const outboundTrack = activeScreenTrack && kind === "video" ? activeScreenTrack : track;
 
         if (sender) {
@@ -220,18 +220,14 @@ export class MeetingPeerSession {
 
     for (const [socketId, peer] of this.peers.entries()) {
       try {
-        const videoSender = peer
-          .getSenders()
-          .find((s) => s.track?.kind === "video");
+        const videoSender = this.getSenderByKind(peer, "video");
         if (videoSender) {
           await videoSender.replaceTrack(screenTrack);
         } else {
           peer.addTrack(screenTrack, stream);
         }
         if (screenAudioTrack) {
-          const audioSender = peer
-            .getSenders()
-            .find((s) => s.track?.kind === "audio");
+          const audioSender = this.getSenderByKind(peer, "audio");
           if (audioSender) {
             await audioSender.replaceTrack(screenAudioTrack);
           } else {
@@ -275,15 +271,11 @@ export class MeetingPeerSession {
 
     for (const [socketId, peer] of this.peers.entries()) {
       try {
-        const videoSender = peer
-          .getSenders()
-          .find((s) => s.track?.kind === "video");
+        const videoSender = this.getSenderByKind(peer, "video");
         if (videoSender) {
           await videoSender.replaceTrack(this.localCameraVideoTrack);
         }
-        const audioSender = peer
-          .getSenders()
-          .find((s) => s.track?.kind === "audio");
+        const audioSender = this.getSenderByKind(peer, "audio");
         if (audioSender && this.localMicAudioTrack) {
           await audioSender.replaceTrack(this.localMicAudioTrack);
         }
@@ -308,13 +300,13 @@ export class MeetingPeerSession {
     for (const [socketId, peer] of this.peers.entries()) {
       if (peer.connectionState === "closed") continue;
       try {
-        const videoSender = peer.getSenders().find((s) => s.track?.kind === "video");
+        const videoSender = this.getSenderByKind(peer, "video");
         if (videoSender && videoSender.track?.id !== screenTrack.id) {
           await videoSender.replaceTrack(screenTrack);
           this.scheduleOffer(socketId);
         }
         if (screenAudioTrack) {
-          const audioSender = peer.getSenders().find((s) => s.track?.kind === "audio");
+          const audioSender = this.getSenderByKind(peer, "audio");
           if (audioSender && audioSender.track?.id !== screenAudioTrack.id) {
             await audioSender.replaceTrack(screenAudioTrack);
             this.scheduleOffer(socketId);
@@ -594,12 +586,12 @@ export class MeetingPeerSession {
     if (this.screenShareStream) {
       const screenTrack = this.screenShareStream.getVideoTracks()[0];
       const screenAudioTrack = this.screenShareStream.getAudioTracks()[0];
-      const videoSender = peer.getSenders().find((s) => s.track?.kind === "video");
+      const videoSender = this.getSenderByKind(peer, "video");
       if (videoSender && screenTrack) {
         void videoSender.replaceTrack(screenTrack);
       }
       if (screenAudioTrack) {
-        const audioSender = peer.getSenders().find((s) => s.track?.kind === "audio");
+        const audioSender = this.getSenderByKind(peer, "audio");
         if (audioSender) {
           void audioSender.replaceTrack(screenAudioTrack);
         }
@@ -607,6 +599,24 @@ export class MeetingPeerSession {
     }
 
     return peer;
+  }
+
+  private getSenderByKind(
+    peer: RTCPeerConnection,
+    kind: "audio" | "video"
+  ): RTCRtpSender | null {
+    const senderWithTrack = peer.getSenders().find((sender) => sender.track?.kind === kind);
+    if (senderWithTrack) return senderWithTrack;
+
+    return (
+      peer
+        .getTransceivers()
+        .find(
+          (transceiver) =>
+            transceiver.sender.track?.kind === kind ||
+            transceiver.receiver.track.kind === kind
+        )?.sender || null
+    );
   }
 
   private syncCachedLocalTracks(): void {

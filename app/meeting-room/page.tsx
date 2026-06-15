@@ -1819,14 +1819,12 @@ export default function MeetingRoom() {
         ? totalConferencingUsers > 1 ? "sidebar" : "spotlight"
         : totalConferencingUsers >= 7
           ? "sidebar"
-          : activeSpeakerId && totalConferencingUsers > 2
-            ? "sidebar"
-            : "tiled"
+          : "tiled"
       : meetingLayout;
   const layoutWantsStage =
     effectiveLayout === "spotlight" || effectiveLayout === "sidebar";
   const defaultStageParticipantId =
-    activeSpeakerId || participants[0]?.socketId || "local";
+    participants[0]?.socketId || "local";
   const stageParticipantId =
     pinnedParticipantId || presenterId || (layoutWantsStage ? defaultStageParticipantId : null);
   const useStageLayout =
@@ -1836,8 +1834,6 @@ export default function MeetingRoom() {
     if (b.socketId === pinnedParticipantId) return 1;
     if (a.socketId === presenterId) return -1;
     if (b.socketId === presenterId) return 1;
-    if (a.socketId === activeSpeakerId) return -1;
-    if (b.socketId === activeSpeakerId) return 1;
     return 0;
   });
   const visibleGridCount = totalConferencingUsers;
@@ -2379,9 +2375,7 @@ export default function MeetingRoom() {
                         ? -30
                         : p.socketId === presenterId
                           ? -20
-                          : p.socketId === activeSpeakerId
-                            ? -10
-                            : 0,
+                          : 0,
                   }}
                   onClick={() => handleSelectParticipant(p.socketId)}
                   onDoubleClick={() => handleToggleParticipantPin(p.socketId)}
