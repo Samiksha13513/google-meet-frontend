@@ -1850,10 +1850,12 @@ export default function MeetingRoom() {
             : sidePanelOpen
               ? 3
               : 4;
+  const gridRowCount = Math.ceil(visibleGridCount / gridColumnCount);
   const gridStyle: React.CSSProperties | undefined = isTwoUp
     ? undefined
     : {
       gridTemplateColumns: `repeat(${gridColumnCount}, minmax(0, 1fr))`,
+      gridTemplateRows: `repeat(${gridRowCount}, minmax(0, 1fr))`,
     };
   const presenterParticipant =
     stageParticipantId === "local" ? null : participants.find((p) => p.socketId === stageParticipantId);
@@ -2283,25 +2285,25 @@ export default function MeetingRoom() {
             <div
               style={gridStyle}
               className={[
-                "grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden",
-                "place-content-center",
+                "grid items-stretch gap-2 sm:gap-4 w-full mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden",
+                "place-items-stretch",
                 isTwoUp
                   ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]"
                   : sidePanelOpen
                     ? "md:max-w-[calc(100vw-26rem)] 2xl:max-w-[calc(100vw-26rem)]"
-                    : "max-w-7xl 2xl:max-w-[1600px]",
+                    : "max-w-none",
               ].join(" ")}
             >
               {/* 1. Local Participant Card */}
               <div
                 className={[
-                  "meet-tile relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                  "meet-tile relative min-w-0 min-h-0 w-full rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
                   // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
                   pinnedParticipantId === "local" || isScreenSharing
                     ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                     : "",
                   activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
-                  isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
+                  isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video md:aspect-auto md:h-full",
                 ].join(" ")}
                 style={{
                   order: isScreenSharing || pinnedParticipantId === "local" ? -20 : presenterId || pinnedParticipantId ? 10 : 0,
@@ -2369,12 +2371,12 @@ export default function MeetingRoom() {
                 <div
                   key={p.socketId}
                   className={[
-                    "meet-tile relative min-w-0 rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                    "meet-tile relative min-w-0 min-h-0 w-full rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
                     pinnedParticipantId === p.socketId || p.isScreenSharing
                       ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                       : "",
                     activeSpeakerId === p.socketId ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
-                    isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video",
+                    isTwoUp ? "aspect-video md:aspect-auto md:h-full" : "aspect-video md:aspect-auto md:h-full",
                   ].join(" ")}
                   style={{
                     order:
