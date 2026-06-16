@@ -1837,14 +1837,19 @@ export default function MeetingRoom() {
     return 0;
   });
   const visibleGridCount = totalConferencingUsers;
+  const sidePanelOpen = showParticipantsList || showChat;
   const gridColumnCount =
     visibleGridCount <= 1
       ? 1
       : visibleGridCount <= 4
         ? 2
-        : visibleGridCount <= 9
-          ? 3
-          : 4;
+        : sidePanelOpen && visibleGridCount <= 6
+          ? 2
+          : visibleGridCount <= 9
+            ? 3
+            : sidePanelOpen
+              ? 3
+              : 4;
   const gridStyle: React.CSSProperties | undefined = isTwoUp
     ? undefined
     : {
@@ -2280,7 +2285,11 @@ export default function MeetingRoom() {
               className={[
                 "grid auto-rows-fr items-stretch gap-2 sm:gap-4 w-full mx-auto h-full p-1 sm:p-2 overflow-y-auto overscroll-contain overflow-x-hidden",
                 "place-content-center",
-                isTwoUp ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]" : "max-w-7xl 2xl:max-w-[1600px]",
+                isTwoUp
+                  ? "grid-cols-1 md:grid-cols-2 max-w-[1600px]"
+                  : sidePanelOpen
+                    ? "md:max-w-[calc(100vw-26rem)] 2xl:max-w-[calc(100vw-26rem)]"
+                    : "max-w-7xl 2xl:max-w-[1600px]",
               ].join(" ")}
             >
               {/* 1. Local Participant Card */}
