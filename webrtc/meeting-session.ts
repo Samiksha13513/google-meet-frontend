@@ -42,6 +42,7 @@ type EmojiPayload = {
 
 export type MeetingSessionCallbacks = {
   onWaitingRoom?: () => void;
+  onAlreadyInMeeting?: () => void;
   onJoinApproved?: (members: MeetingMember[], isHost: boolean) => void;
   onChatHistory?: (messages: ChatPayload[]) => void;
   onJoinDenied?: (reason: string) => void;
@@ -52,6 +53,7 @@ export type MeetingSessionCallbacks = {
     details?: Partial<MeetingMember>
   ) => void;
   onParticipantJoined?: (member: MeetingMember) => void;
+  onParticipantSwitched?: (data: { previousSocketId: string; member: MeetingMember }) => void;
   onRemoteStreamRemoved: (socketId: string) => void;
   onRemoteStatusChanged?: (data: {
     socketId: string;
@@ -73,6 +75,7 @@ export type MeetingSessionCallbacks = {
   onLocalScreenShareEnded?: () => void;
   onHandRaisedChanged?: (data: { senderId: string; isHandRaised: boolean }) => void;
   onKicked?: () => void;
+  onForceSwitched?: () => void;
   onMeetingEnded?: (data: { reason?: string }) => void;
 };
 
@@ -386,6 +389,17 @@ export class MeetingPeerSession {
 
   endMeetingForAll(): void {
     this.socket.emit("end-meeting-for-all", { roomId: this.roomId });
+  }
+
+  switchHere(identity: {
+    displayName: string;
+    email?: string;
+    image?: string;
+    token?: string;
+    isMicOn?: boolean;
+    isCameraOn?: boolean;
+  }): void {
+    this.socket.emit("switch-here", { roomId: this.roomId, ...identity });
   }
 
   destroy(): void {
@@ -789,6 +803,11 @@ export class MeetingPeerSession {
       this.callbacks.onWaitingRoom?.();
     });
 
+    this.socket.on("already-in-meeting", () => {
+      console.log("[WebRTC:Mesh] already-in-meeting event received");
+      this.callbacks.onAlreadyInMeeting?.();
+    });
+
     this.socket.on("join-approved", async (data: { isHost: boolean, members: MeetingMember[], chatHistory?: ChatPayload[] }) => {
       console.log("[WebRTC:Mesh] join-approved event received. Members count:", data.members.length);
       this.callbacks.onChatHistory?.(data.chatHistory || []);
@@ -814,6 +833,11 @@ export class MeetingPeerSession {
       this.callbacks.onKicked?.();
     });
 
+    this.socket.on("force-switched", () => {
+      console.log("[WebRTC:Mesh] Meeting switched to another session");
+      this.callbacks.onForceSwitched?.();
+    });
+
     // 2. Mesh participant joins/leaves
     this.socket.on("participant-joined", (details: MeetingMember) => {
       console.log("[WebRTC:Mesh] participant-joined event from:", details.socketId);
@@ -822,6 +846,14 @@ export class MeetingPeerSession {
       this.remoteDisplayNames.set(details.socketId, details.displayName);
       this.remoteDetails.set(details.socketId, details);
       this.callbacks.onParticipantJoined?.(details);
+    });
+
+    this.socket.on("participant-switched", (data: { previousSocketId: string; member: MeetingMember }) => {
+      if (data.member.socketId === this.socket.id) return;
+      this.removePeer(data.previousSocketId);
+      this.remoteDisplayNames.set(data.member.socketId, data.member.displayName);
+      this.remoteDetails.set(data.member.socketId, data.member);
+      this.callbacks.onParticipantSwitched?.(data);
     });
 
     this.socket.on("participant-left", (data: { socketId: string }) => {
@@ -945,10 +977,13 @@ export class MeetingPeerSession {
 
   private unregisterSocketEvents(): void {
     this.socket.off("waiting-room");
+    this.socket.off("already-in-meeting");
     this.socket.off("join-approved");
     this.socket.off("join-denied");
     this.socket.off("removed-from-meeting");
+    this.socket.off("force-switched");
     this.socket.off("participant-joined");
+    this.socket.off("participant-switched");
     this.socket.off("participant-left");
     this.socket.off("offer");
     this.socket.off("answer");

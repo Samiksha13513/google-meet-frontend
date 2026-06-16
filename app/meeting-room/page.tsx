@@ -350,6 +350,8 @@ export default function MeetingRoom() {
     () => getStoredDevicePreferences().videoInputId
   );
   const [isJoining, setIsJoining] = useState(false);
+  const [showSwitchHereModal, setShowSwitchHereModal] = useState(false);
+  const [switchedAway, setSwitchedAway] = useState(false);
   const [, setPermissionRequested] = useState(false);
   const [deniedReason, setDeniedReason] = useState("Host denied your request");
 
@@ -414,6 +416,8 @@ export default function MeetingRoom() {
   const audioDeviceMenuRef = useRef<HTMLDivElement>(null);
   const videoDeviceMenuRef = useRef<HTMLDivElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const switchHereDialogRef = useRef<HTMLDivElement>(null);
+  const switchHereButtonRef = useRef<HTMLButtonElement>(null);
   const meetingJoinedAtRef = useRef<number | null>(null);
   const showChatRef = useRef(false);
   const screenShareUnbindRef = useRef<(() => void) | null>(null);
@@ -898,6 +902,7 @@ export default function MeetingRoom() {
     sessionRef.current?.destroy();
     sessionRef.current = null;
     setIsJoining(false);
+    setShowSwitchHereModal(false);
     setMeetingState("lobby");
   };
 
@@ -907,6 +912,7 @@ export default function MeetingRoom() {
     meetingJoinedAtRef.current = null;
     setShowLeaveDialog(false);
     setEndedByHost(false);
+    setSwitchedAway(false);
     setMeetingState("ended");
   };
 
@@ -917,6 +923,7 @@ export default function MeetingRoom() {
     meetingJoinedAtRef.current = null;
     setShowLeaveDialog(false);
     setEndedByHost(true);
+    setSwitchedAway(false);
     setMeetingState("ended");
   };
 
@@ -929,10 +936,38 @@ export default function MeetingRoom() {
     setMeetingError(null);
     setMediaError(null);
     setParticipantLeftMessage(null);
+    setSwitchedAway(false);
     setIsScreenSharing(false);
     setIsHandRaised(false);
     setMeetingState("lobby");
     await startPreviewMedia();
+  };
+
+  const getJoinIdentity = () => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
+    return {
+      displayName: isAuthenticated ? displayName : customDisplayName,
+      email: isAuthenticated ? identity.email : undefined,
+      image: isAuthenticated ? identity.image : undefined,
+      token: token || undefined,
+      isMicOn,
+      isCameraOn,
+    };
+  };
+
+  const handleSwitchHere = () => {
+    if (!sessionRef.current) return;
+    setIsJoining(true);
+    setShowSwitchHereModal(false);
+    sessionRef.current.switchHere(getJoinIdentity());
+  };
+
+  const handleCancelSwitchHere = () => {
+    sessionRef.current?.destroy();
+    sessionRef.current = null;
+    setIsJoining(false);
+    setShowSwitchHereModal(false);
+    setMeetingState("lobby");
   };
 
   const handleJoinNow = async () => {
@@ -958,8 +993,14 @@ export default function MeetingRoom() {
         setIsJoining(false);
         setMeetingState("waiting");
       },
+      onAlreadyInMeeting: () => {
+        setIsJoining(false);
+        setShowSwitchHereModal(true);
+      },
       onJoinApproved: (members, isHostRole) => {
         setIsJoining(false);
+        setShowSwitchHereModal(false);
+        setSwitchedAway(false);
         setIsHost(isHostRole);
         setMeetingState("inMeeting");
         meetingJoinedAtRef.current = Date.now();
@@ -1094,6 +1135,19 @@ export default function MeetingRoom() {
           isScreenSharing: member.isScreenSharing || false,
         });
       },
+      onParticipantSwitched: ({ member }) => {
+        upsertParticipant({
+          socketId: member.socketId,
+          displayName: getIdentityLabel(member),
+          email: member.email,
+          image: member.image,
+          isMicOn: member.isMicOn,
+          isCameraOn: member.isCameraOn,
+          isHandRaised: member.isHandRaised || false,
+          isHost: member.isHost,
+          isScreenSharing: member.isScreenSharing || false,
+        });
+      },
       onJoinRequestCancelled: (data) => {
         setJoinRequests((prev) => prev.filter((r) => r.socketId !== data.socketId));
       },
@@ -1175,30 +1229,31 @@ export default function MeetingRoom() {
       },
       onKicked: () => {
         cleanupAll();
+        setSwitchedAway(false);
         setMeetingState("denied");
         setDeniedReason("You were removed from the meeting by the host");
+      },
+      onForceSwitched: () => {
+        cleanupAll();
+        resetInMeetingUiState();
+        meetingJoinedAtRef.current = null;
+        setEndedByHost(false);
+        setSwitchedAway(true);
+        setMeetingState("ended");
       },
       onMeetingEnded: () => {
         cleanupAll();
         resetInMeetingUiState();
         meetingJoinedAtRef.current = null;
         setEndedByHost(true);
+        setSwitchedAway(false);
         setMeetingState("ended");
       },
     });
 
-    const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null;
-
     sessionRef.current = session;
     try {
-      await session.start({
-      displayName: isAuthenticated ? displayName : customDisplayName,
-      email: isAuthenticated ? identity.email : undefined,
-      image: isAuthenticated ? identity.image : undefined,
-      token: token || undefined,
-      isMicOn,
-      isCameraOn,
-    });
+      await session.start(getJoinIdentity());
   } catch (error) {
       setIsJoining(false);
       setMeetingError(error instanceof Error ? error.message : "Unable to join meeting.");
@@ -1627,6 +1682,90 @@ export default function MeetingRoom() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!showSwitchHereModal) return;
+    switchHereButtonRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        handleCancelSwitchHere();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showSwitchHereModal, handleCancelSwitchHere]);
+
+  const switchHereModal = showSwitchHereModal ? (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 px-6 backdrop-blur-[2px]"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          handleCancelSwitchHere();
+        }
+      }}
+    >
+      <div
+        ref={switchHereDialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="switch-here-title"
+        aria-describedby="switch-here-description"
+        onKeyDown={(event) => {
+          if (event.key !== "Tab") return;
+          const buttons = switchHereDialogRef.current?.querySelectorAll("button");
+          if (!buttons?.length) return;
+          const first = buttons[0];
+          const last = buttons[buttons.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
+        className="w-full max-w-[448px] rounded-[28px] bg-white px-6 pb-5 pt-6 text-[#202124] shadow-2xl outline-none sm:px-6"
+      >
+        <h2
+          id="switch-here-title"
+          className="text-[24px] font-normal leading-8 tracking-normal text-[#202124]"
+        >
+          You&apos;re already in this meeting
+        </h2>
+        <p
+          id="switch-here-description"
+          className="mt-4 text-[14px] font-normal leading-5 tracking-normal text-[#5f6368]"
+        >
+          This account is currently participating in this meeting from another
+          tab, window, or device.
+        </p>
+        <p className="mt-3 text-[14px] font-normal leading-5 tracking-normal text-[#5f6368]">
+          If you switch here, the other session will leave the meeting.
+        </p>
+        <div className="mt-8 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={handleCancelSwitchHere}
+            className="h-10 rounded-full px-6 text-sm font-medium text-[#1a73e8] outline-none transition-colors hover:bg-[#1a73e8]/5 focus-visible:ring-2 focus-visible:ring-[#1a73e8] focus-visible:ring-offset-2 active:bg-[#1a73e8]/10"
+          >
+            Cancel
+          </button>
+          <button
+            ref={switchHereButtonRef}
+            type="button"
+            onClick={handleSwitchHere}
+            className="h-10 rounded-full bg-[#1a73e8] px-6 text-sm font-medium text-white outline-none transition-colors hover:bg-[#1765cc] focus-visible:ring-2 focus-visible:ring-[#1a73e8] focus-visible:ring-offset-2 active:bg-[#185abc]"
+          >
+            Switch here
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   // =========================
   // CONDITIONAL RENDER VIEWS
   // =========================
@@ -1642,31 +1781,34 @@ export default function MeetingRoom() {
 
   if (meetingState === "lobby") {
     return (
-      <PreviewLobby
-        displayName={resolvedDisplayName}
-        email={isAuthenticated ? identity.email : undefined}
-        image={isAuthenticated ? identity.image : undefined}
-        videoRef={localVideoRef}
-        isMicOn={isMicOn}
-        isCameraOn={isCameraOn}
-        mediaError={mediaError}
-        onToggleMic={handleToggleMic}
-        onToggleCamera={handleToggleCamera}
-        audioInputDevices={audioInputDevices}
-        audioOutputDevices={audioOutputDevices}
-        videoInputDevices={videoInputDevices}
-        selectedAudioInputId={selectedAudioInputId}
-        selectedAudioOutputId={selectedAudioOutputId}
-        selectedVideoInputId={selectedVideoInputId}
-        onSelectAudioInput={(deviceId) => void handleSelectAudioInput(deviceId)}
-        onSelectAudioOutput={handleSelectAudioOutput}
-        onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
-        onJoinNow={handleJoinNow}
-        isAuthenticated={isAuthenticated}
-        customDisplayName={customDisplayName}
-        onCustomDisplayNameChange={setCustomDisplayName}
-        isJoining={isJoining}
-      />
+      <>
+        <PreviewLobby
+          displayName={resolvedDisplayName}
+          email={isAuthenticated ? identity.email : undefined}
+          image={isAuthenticated ? identity.image : undefined}
+          videoRef={localVideoRef}
+          isMicOn={isMicOn}
+          isCameraOn={isCameraOn}
+          mediaError={mediaError}
+          onToggleMic={handleToggleMic}
+          onToggleCamera={handleToggleCamera}
+          audioInputDevices={audioInputDevices}
+          audioOutputDevices={audioOutputDevices}
+          videoInputDevices={videoInputDevices}
+          selectedAudioInputId={selectedAudioInputId}
+          selectedAudioOutputId={selectedAudioOutputId}
+          selectedVideoInputId={selectedVideoInputId}
+          onSelectAudioInput={(deviceId) => void handleSelectAudioInput(deviceId)}
+          onSelectAudioOutput={handleSelectAudioOutput}
+          onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
+          onJoinNow={handleJoinNow}
+          isAuthenticated={isAuthenticated}
+          customDisplayName={customDisplayName}
+          onCustomDisplayNameChange={setCustomDisplayName}
+          isJoining={isJoining}
+        />
+        {switchHereModal}
+      </>
     );
   }
 
@@ -1755,7 +1897,11 @@ export default function MeetingRoom() {
     return (
       <div className="fixed inset-0 bg-[#202124] text-white flex flex-col items-center justify-center gap-6">
         <h1 className="text-3xl font-light">
-          {endedByHost ? "The meeting has ended" : "You left the meeting"}
+          {switchedAway
+            ? "You switched this meeting to another window."
+            : endedByHost
+              ? "The meeting has ended"
+              : "You left the meeting"}
         </h1>
         <p className="text-sm text-white/60">Meeting code: {meetingCode}</p>
         <div className="flex gap-4 mt-2">
