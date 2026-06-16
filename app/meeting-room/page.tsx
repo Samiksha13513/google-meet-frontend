@@ -1837,20 +1837,18 @@ export default function MeetingRoom() {
     return 0;
   });
   const visibleGridCount = totalConferencingUsers;
-  const minTilePx =
+  const gridColumnCount =
     visibleGridCount <= 1
-      ? 620
-      : visibleGridCount === 2
-        ? 420
-        : visibleGridCount <= 4
-          ? 300
-          : visibleGridCount <= 9
-            ? 220
-            : 170;
+      ? 1
+      : visibleGridCount <= 4
+        ? 2
+        : visibleGridCount <= 9
+          ? 3
+          : 4;
   const gridStyle: React.CSSProperties | undefined = isTwoUp
     ? undefined
     : {
-      gridTemplateColumns: `repeat(auto-fit, minmax(min(${minTilePx}px, 100%), 1fr))`,
+      gridTemplateColumns: `repeat(${gridColumnCount}, minmax(0, 1fr))`,
     };
   const presenterParticipant =
     stageParticipantId === "local" ? null : participants.find((p) => p.socketId === stageParticipantId);

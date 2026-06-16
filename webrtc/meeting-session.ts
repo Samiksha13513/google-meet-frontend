@@ -617,6 +617,7 @@ export class MeetingPeerSession {
             transceiver.receiver.track.kind === kind
         )?.sender || null
     );
+
   }
 
   private syncCachedLocalTracks(): void {
