@@ -2,10 +2,6 @@
 
 import { useState, useEffect, useRef, memo } from "react";
 import {
-  Mic,
-  MicOff,
-  Video,
-  VideoOff,
   MonitorUp,
   Info,
   MessageSquare,
@@ -18,9 +14,9 @@ import {
   Rows3,
   Pin,
   PinOff,
-  Lock,
   Hand,
   Phone,
+  Copy,
 } from "lucide-react";
 
 import { useParams, useRouter } from "next/navigation";
@@ -40,6 +36,7 @@ import { HandLowerToast } from "@/components/meeting/HandLowerToast";
 import { HandRaiseNotifications } from "@/components/meeting/HandRaiseNotifications";
 import { MeetControlBar } from "@/components/meeting/MeetControlBar";
 import { MeetPersonAvatar } from "@/components/meeting/MeetPersonAvatar";
+import { MeetMicStatus } from "@/components/meeting/MeetMicStatus";
 import { PeoplePanel } from "@/components/meeting/PeoplePanel";
 import {
   getCurrentUserIdentity,
@@ -52,7 +49,6 @@ import { getMeetingByCode } from "@/lib/api";
 import { buildMeetingLink } from "@/lib/meet-link";
 import type { Meeting } from "@/types/meeting";
 
-const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮"];
 const DEVICE_PREFERENCES_KEY = "meet-device-preferences";
 
 type MeetingState =
@@ -357,8 +353,9 @@ export default function MeetingRoom() {
 
   const [currentTime, setCurrentTime] = useState("");
   const [participantLeftMessage, setParticipantLeftMessage] = useState<string | null>(null);
+  const [copiedToast, setCopiedToast] = useState<string | null>(null);
   const [meetingData, setMeetingData] = useState<Meeting | null>(null);
-  const [meetingDuration, setMeetingDuration] = useState("0:00");
+  const [, setMeetingDuration] = useState("0:00");
   const [showLeaveDialog, setShowLeaveDialog] = useState(false);
   const [showMoreOptionsMenu, setShowMoreOptionsMenu] = useState(false);
   const [isMeetingLocked, setIsMeetingLocked] = useState(false);
@@ -870,6 +867,16 @@ export default function MeetingRoom() {
     if (!chatInput.trim()) return;
     sessionRef.current?.sendChatMessage(chatInput.trim(), resolvedDisplayName);
     setChatInput("");
+  };
+
+  const handleCopyMessage = async (message: string) => {
+    try {
+      await navigator.clipboard.writeText(message);
+      setCopiedToast("Message copied");
+    } catch {
+      setCopiedToast("Unable to copy message");
+    }
+    window.setTimeout(() => setCopiedToast(null), 2200);
   };
 
   const handleAdmit = (socketId: string) => {
@@ -1820,6 +1827,15 @@ export default function MeetingRoom() {
           videoRef={localVideoRef}
           isMicOn={isMicOn}
           isCameraOn={isCameraOn}
+          audioInputDevices={audioInputDevices}
+          audioOutputDevices={audioOutputDevices}
+          videoInputDevices={videoInputDevices}
+          selectedAudioInputId={selectedAudioInputId}
+          selectedAudioOutputId={selectedAudioOutputId}
+          selectedVideoInputId={selectedVideoInputId}
+          onSelectAudioInput={(deviceId) => void handleSelectAudioInput(deviceId)}
+          onSelectAudioOutput={handleSelectAudioOutput}
+          onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
           onToggleMic={handleToggleMic}
           onToggleCamera={handleToggleCamera}
           onLeave={handleCancelJoinRequest}
@@ -2069,7 +2085,7 @@ export default function MeetingRoom() {
         <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
         {handRaised && <Hand className="h-3 w-3 text-[#81c995]" aria-label="Hand raised" />}
         {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
-        {!micOn && <MicOff className="h-3 w-3 text-red-400" />}
+        <MeetMicStatus isMicOn={micOn} compact />
         {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
         {pinnedParticipantId === props.id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
       </div>
@@ -2158,6 +2174,14 @@ export default function MeetingRoom() {
         <div className="absolute top-16 left-1/2 z-[80] -translate-x-1/2 animate-fade-in">
           <div className="rounded-full bg-[#323639] px-4 py-2 text-sm text-white shadow-lg ring-1 ring-white/10">
             {participantLeftMessage}
+          </div>
+        </div>
+      )}
+
+      {copiedToast && (
+        <div className="absolute bottom-24 left-1/2 z-[80] -translate-x-1/2 animate-fade-in">
+          <div className="rounded-full bg-[#323639] px-4 py-2 text-sm text-white shadow-lg ring-1 ring-white/10">
+            {copiedToast}
           </div>
         </div>
       )}
@@ -2341,7 +2365,7 @@ export default function MeetingRoom() {
                 {showLocalInFilmstrip && (
                   <div
                     className={[
-                      "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 cursor-pointer rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
                       stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
                       pinnedParticipantId === "local" ? "ring-2 ring-[#8ab4f8]" : "",
                       activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
@@ -2385,7 +2409,7 @@ export default function MeetingRoom() {
                   <div
                     key={p.socketId}
                     className={[
-                      "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                      "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 cursor-pointer rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
                       stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
                       activeSpeakerId === p.socketId ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
                       pinnedParticipantId === p.socketId ? "ring-2 ring-[#8ab4f8]" : "",
@@ -2443,7 +2467,7 @@ export default function MeetingRoom() {
               {/* 1. Local Participant Card */}
               <div
                 className={[
-                  "meet-tile relative min-w-0 min-h-0 w-full rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                  "meet-tile relative min-w-0 min-h-0 w-full cursor-pointer rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
                   // Prevent desktop 2-up overlap: on md+ fill available height instead of forcing aspect ratio
                   pinnedParticipantId === "local" || isScreenSharing
                     ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
@@ -2517,7 +2541,7 @@ export default function MeetingRoom() {
                 <div
                   key={p.socketId}
                   className={[
-                    "meet-tile relative min-w-0 min-h-0 w-full rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
+                    "meet-tile relative min-w-0 min-h-0 w-full cursor-pointer rounded-2xl overflow-hidden bg-[#3c4043] border border-white/5 shadow-md flex items-center justify-center",
                     pinnedParticipantId === p.socketId || p.isScreenSharing
                       ? "ring-2 ring-[#8ab4f8] md:col-span-2 md:row-span-2"
                       : "",
@@ -2623,7 +2647,10 @@ export default function MeetingRoom() {
               ) : (
                 <div className="flex flex-col gap-4">
                   {messages.map((m, i) => (
-                    <div key={m.id || `${m.timestamp}-${i}`} className="flex items-start gap-3">
+                    <div
+                      key={m.id || `${m.timestamp}-${i}`}
+                      className="group flex items-start gap-3 rounded-xl px-1 py-1 transition-colors hover:bg-white/5"
+                    >
                       <MeetAvatar
                         name={m.senderName}
                         email={m.senderEmail}
@@ -2641,6 +2668,15 @@ export default function MeetingRoom() {
                               minute: "2-digit",
                             })}
                           </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyMessage(m.message)}
+                            className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8ab4f8] md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+                            title="Copy text"
+                            aria-label="Copy message text"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
                         </div>
                         {m.senderEmail && (
                           <div className="truncate text-[11px] text-white/45">
@@ -2726,11 +2762,11 @@ export default function MeetingRoom() {
                 <Phone className="h-6 w-6 rotate-[135deg] text-[#d93025]" aria-hidden />
               </div>
               <h2 id="leave-meeting-title" className="text-[22px] font-normal leading-7">
-                {isHost ? "Leave call?" : "Leave call?"}
+                {isHost ? "Leave this call?" : "Leave call?"}
               </h2>
               <p className="mt-2 text-sm leading-5 text-[#5f6368]">
                 {isHost
-                  ? "You can let others keep talking, or end the call for everyone."
+                  ? "Choose whether to leave the meeting or end it for everyone."
                   : "You'll leave the call. Others can keep talking."}
               </p>
             </div>
@@ -2741,7 +2777,7 @@ export default function MeetingRoom() {
                   onClick={handleEndMeetingForAll}
                   className="h-11 w-full rounded-full bg-[#d93025] text-sm font-medium text-white transition-colors hover:bg-[#c5221f]"
                 >
-                  End call for everyone
+                  End for everyone
                 </button>
               )}
               <button
@@ -2749,7 +2785,7 @@ export default function MeetingRoom() {
                 onClick={handleLeaveMeeting}
                 className="h-11 w-full rounded-full border border-[#dadce0] text-sm font-medium text-[#1a73e8] transition-colors hover:bg-[#f8fafd]"
               >
-                Leave call
+                {isHost ? "Leave meeting" : "Leave call"}
               </button>
               <button
                 type="button"
@@ -2764,8 +2800,6 @@ export default function MeetingRoom() {
       )}
 
       <MeetControlBar
-        currentTime={currentTime}
-        meetingDuration={meetingDuration}
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
         isScreenSharing={isScreenSharing}

@@ -43,6 +43,12 @@ body {
   font-family: var(--font-google);
 }
 
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+summary {
+  cursor: pointer;
+}
+
 /* Meet-style utility helpers */
 .meet-btn-primary {
   background-color: var(--meet-blue);
@@ -193,6 +199,7 @@ body {
   align-items: center;
   justify-content: center;
   border-radius: 9999px;
+  cursor: pointer;
   transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
 }
 
@@ -258,6 +265,7 @@ body {
   align-items: center;
   justify-content: center;
   height: 100%;
+  cursor: pointer;
   transition: background-color 150ms ease;
 }
 
@@ -282,6 +290,7 @@ body {
   border-radius: 9999px;
   background-color: #ea4335;
   color: #fff;
+  cursor: pointer;
   transition: background-color 150ms ease;
 }
 
@@ -310,6 +319,7 @@ body {
   border-radius: 9999px;
   border: 1px solid rgba(255, 255, 255, 0.8);
   color: #fff;
+  cursor: pointer;
   transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease;
 }
 
@@ -364,6 +374,7 @@ body {
   justify-content: center;
   transition: background-color 180ms ease, box-shadow 180ms ease;
   box-shadow: 0 1px 2px rgba(26, 115, 232, 0.2);
+  cursor: pointer;
 }
 
 .meet-join-now-btn:hover:not(:disabled) {

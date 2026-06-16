@@ -10,7 +10,6 @@ import {
   Mic,
   MicOff,
   MonitorUp,
-  MoreHorizontal,
   MoreVertical,
   Phone,
   Shield,
@@ -33,8 +32,6 @@ type LayoutOption = {
 };
 
 type MeetControlBarProps = {
-  currentTime: string;
-  meetingDuration: string;
   isMicOn: boolean;
   isCameraOn: boolean;
   isScreenSharing: boolean;
@@ -80,8 +77,6 @@ type MeetControlBarProps = {
 };
 
 export function MeetControlBar({
-  currentTime,
-  meetingDuration,
   isMicOn,
   isCameraOn,
   isScreenSharing,
@@ -139,10 +134,7 @@ export function MeetControlBar({
 
   return (
     <div className="relative z-40 flex min-h-[72px] items-center justify-between gap-2 border-t border-white/5 bg-[#202124] px-2 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] sm:px-4">
-      <div className="hidden min-w-[88px] flex-col text-xs font-light text-white/55 lg:flex">
-        <span>{currentTime}</span>
-        <span className="mt-0.5 font-mono tracking-wider text-[#8ab4f8]">{meetingDuration}</span>
-      </div>
+      <div className="hidden min-w-[88px] lg:block" aria-hidden />
 
       <div className="mx-auto flex max-w-full items-center gap-1 overflow-x-auto px-1 no-scrollbar sm:gap-1.5">
         <div className="relative shrink-0" ref={audioDeviceMenuRef}>

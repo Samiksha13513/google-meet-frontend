@@ -5,11 +5,7 @@ import {
   AlertTriangle,
   ChevronUp,
   Hand,
-  Mic,
-  MicOff,
   MoreVertical,
-  Search,
-  UserPlus,
   UserX,
   Video,
   VideoOff,
@@ -17,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { MeetPersonAvatar } from "@/components/meeting/MeetPersonAvatar";
+import { MeetMicStatus } from "@/components/meeting/MeetMicStatus";
 import type { AdmitGuestRequest } from "@/components/meeting/AdmitGuestControl";
 
 type InMeetingParticipant = {
@@ -60,12 +57,10 @@ export function PeoplePanel({
   localEmail,
   localImage,
   isLocalMicOn,
-  isLocalCameraOn,
   isLocalHandRaised,
   joinRequests,
   participants,
   searchQuery,
-  onSearchChange,
   onClose,
   onAdmit,
   onDeny,
@@ -255,7 +250,7 @@ export function PeoplePanel({
                   </div>
                   <span className="flex gap-1 text-white/50">
                     {isLocalHandRaised && <Hand className="h-4 w-4 text-[#81c995]" />}
-                    {/* {isLocalMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />} */}
+                    <MeetMicStatus isMicOn={isLocalMicOn} compact />
                     {/* {isLocalCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />} */}
                   </span>
                 </div>
@@ -279,7 +274,7 @@ export function PeoplePanel({
                     </div>
                     <span className="flex gap-1 text-white/50">
                       {p.isHandRaised && <Hand className="h-4 w-4 text-[#81c995]" />}
-                      {p.isMicOn ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4 text-red-400" />}
+                      <MeetMicStatus isMicOn={p.isMicOn} compact />
                       {p.isCameraOn ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4 text-red-400" />}
                     </span>
                     {isHost && onRemove && (
@@ -288,6 +283,7 @@ export function PeoplePanel({
                         onClick={() => onRemove(p.socketId)}
                         className="flex h-8 w-8 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-red-500/20 hover:text-red-400"
                         title="Remove participant"
+                        aria-label={`Remove ${p.displayName}`}
                       >
                         <UserX className="h-4 w-4" />
                       </button>

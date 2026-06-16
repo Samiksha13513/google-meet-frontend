@@ -22,6 +22,9 @@ import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndica
 import { useMicLevel } from "@/hooks/useMicLevel";
 import { SelfieBackgroundEffect } from "@/webrtc/selfie-effects";
 
+const VISUAL_EFFECT_KEY = "meet-preview-visual-effect";
+type VisualEffect = "none" | "blur";
+
 type PreviewLobbyProps = {
   displayName: string;
   email?: string;
@@ -158,19 +161,22 @@ function PreviewControls({
   isMicOn,
   isCameraOn,
   micLevel,
-  isVisualEffectsOn,
+  selectedEffect,
   onToggleMic,
   onToggleCamera,
-  onToggleVisualEffects,
+  onSelectVisualEffect,
 }: {
   isMicOn: boolean;
   isCameraOn: boolean;
   micLevel: number;
-  isVisualEffectsOn: boolean;
+  selectedEffect: VisualEffect;
   onToggleMic: () => void;
   onToggleCamera: () => void;
-  onToggleVisualEffects: () => void;
+  onSelectVisualEffect: (effect: VisualEffect) => void;
 }) {
+  const [showEffects, setShowEffects] = useState(false);
+  const isVisualEffectsOn = selectedEffect !== "none";
+
   return (
     <>
       <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4">
@@ -206,8 +212,10 @@ function PreviewControls({
 
       <button
         type="button"
-        onClick={onToggleVisualEffects}
-        title={isVisualEffectsOn ? "Turn off visual effects" : "Apply visual effects"}
+        onClick={() => setShowEffects((prev) => !prev)}
+        title="Apply visual effects"
+        aria-haspopup="menu"
+        aria-expanded={showEffects}
         className={[
           "meet-lobby-control meet-lobby-control-on absolute bottom-4 right-4 h-12 w-12",
           isVisualEffectsOn ? "bg-white/25 ring-2 ring-white/70" : "",
@@ -215,6 +223,37 @@ function PreviewControls({
       >
         <Sparkles className="h-5 w-5" />
       </button>
+      {showEffects && (
+        <div
+          role="menu"
+          className="absolute bottom-[76px] right-4 z-40 w-48 rounded-2xl border border-white/15 bg-[#303134] p-2 text-white shadow-2xl"
+        >
+          {([
+            ["none", "No effect"],
+            ["blur", "Blur background"],
+          ] as Array<[VisualEffect, string]>).map(([effect, label]) => (
+            <button
+              key={effect}
+              type="button"
+              role="menuitemradio"
+              aria-checked={selectedEffect === effect}
+              onClick={() => {
+                onSelectVisualEffect(effect);
+                setShowEffects(false);
+              }}
+              className={[
+                "flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8ab4f8]",
+                selectedEffect === effect ? "bg-[#8ab4f8] text-[#202124]" : "text-white/90",
+              ].join(" ")}
+            >
+              <span>{label}</span>
+              {selectedEffect === effect && (
+                <span aria-hidden className="h-2 w-2 rounded-full bg-current" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
     </>
   );
 }
@@ -250,7 +289,10 @@ export function PreviewLobby({
     (isAuthenticated ? "Signed-in user" : "");
   const initial = getDisplayInitial(label || "Guest");
   const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
-  const [isVisualEffectsOn, setIsVisualEffectsOn] = useState(false);
+  const [selectedEffect, setSelectedEffect] = useState<VisualEffect>(() => {
+    if (typeof window === "undefined") return "none";
+    return localStorage.getItem(VISUAL_EFFECT_KEY) === "blur" ? "blur" : "none";
+  });
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const selfieEffectRef = useRef<SelfieBackgroundEffect | null>(null);
@@ -272,7 +314,7 @@ export function PreviewLobby({
     const video = videoRef.current;
     const canvas = previewCanvasRef.current;
 
-    if (!isVisualEffectsOn || !isCameraOn || !video || !canvas) {
+    if (selectedEffect !== "blur" || !isCameraOn || !video || !canvas) {
       selfieEffectRef.current?.stop();
       return;
     }
@@ -284,7 +326,7 @@ export function PreviewLobby({
     void effect.startPreview(video, canvas).catch((error) => {
       console.warn("[SelfieEffects] preview failed:", error);
       if (!cancelled) {
-        setIsVisualEffectsOn(false);
+        handleSelectVisualEffect("none");
       }
     });
 
@@ -292,7 +334,7 @@ export function PreviewLobby({
       cancelled = true;
       effect.stop();
     };
-  }, [isVisualEffectsOn, isCameraOn, videoRef]);
+  }, [selectedEffect, isCameraOn, videoRef]);
 
   useEffect(() => {
     return () => {
@@ -301,8 +343,11 @@ export function PreviewLobby({
     };
   }, []);
 
-  const handleToggleVisualEffects = () => {
-    setIsVisualEffectsOn((prev) => !prev);
+  const handleSelectVisualEffect = (effect: VisualEffect) => {
+    setSelectedEffect(effect);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(VISUAL_EFFECT_KEY, effect);
+    }
   };
 
   const others = participants.filter((p) => {
@@ -333,7 +378,7 @@ export function PreviewLobby({
     ? !isJoining && !mediaError
     : !isJoining && !mediaError && Boolean(customDisplayName.trim());
 
-  const showProcessedPreview = isCameraOn && isVisualEffectsOn;
+  const showProcessedPreview = isCameraOn && selectedEffect === "blur";
 
   const previewCard = (
     <div className="relative aspect-video w-full overflow-hidden meet-video-box bg-[#3c4043]">
@@ -384,10 +429,10 @@ export function PreviewLobby({
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
         micLevel={micLevel}
-        isVisualEffectsOn={isVisualEffectsOn}
+        selectedEffect={selectedEffect}
         onToggleMic={onToggleMic}
         onToggleCamera={onToggleCamera}
-        onToggleVisualEffects={handleToggleVisualEffects}
+        onSelectVisualEffect={handleSelectVisualEffect}
       />
     </div>
   );
@@ -541,4 +586,3 @@ export function PreviewLobby({
     </div>
   );
 }
-

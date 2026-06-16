@@ -1,6 +1,7 @@
-import { MicOff, ScreenShare } from "lucide-react";
+import { ScreenShare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Participant } from "@/types/meeting";
+import { MeetMicStatus } from "@/components/meeting/MeetMicStatus";
 
 type ParticipantTileProps = {
   participant: Participant;
@@ -38,11 +39,10 @@ export function ParticipantTile({
         </div>
       )}
 
-      {!participant.micEnabled && (
-        <div className="absolute right-3 top-3 rounded-full bg-black/40 p-2">
-          <MicOff className="h-4 w-4" />
-        </div>
-      )}
+      <MeetMicStatus
+        isMicOn={participant.micEnabled}
+        className="absolute right-3 top-3"
+      />
 
       <div className="absolute bottom-3 left-3 rounded bg-black/35 px-2 py-1 text-sm">
         {participant.displayName}
