@@ -166,16 +166,7 @@ export const MeetControlBar = memo(function MeetControlBar({
               aria-label={isMicOn ? "Turn off microphone" : "Turn on microphone"}
               aria-pressed={isMicOn}
             >
-              <span className="flex items-center justify-center gap-1.5">
-                <VoiceActivityIndicator
-                  level={localMicLevel}
-                  levelStore={localMicLevelStore}
-                  active={isMicOn}
-                  size="sm"
-                  variant="inline"
-                />
-                {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-              </span>
+            {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
             </button>
             <span className="meet-split-divider" aria-hidden />
             <button
