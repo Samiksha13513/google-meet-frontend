@@ -179,15 +179,16 @@ function PreviewControls({
 
   return (
     <>
+      <div className="absolute bottom-4 left-4 flex items-center justify-center">
+        <VoiceActivityIndicator
+          level={micLevel}
+          active={isMicOn}
+          size="md"
+          variant="badge"
+        />
+      </div>
+
       <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4">
-      <div className="flex h-10 w-10 items-center justify-center">
-    <VoiceActivityIndicator
-      level={micLevel}
-      active={isMicOn}
-      size="md"
-      variant="badge"
-    />
-  </div>
         <button
           type="button"
           onClick={onToggleMic}
@@ -197,7 +198,7 @@ function PreviewControls({
             isMicOn ? "meet-lobby-control-on" : "meet-lobby-control-off",
           ].join(" ")}
         >
-         <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-4"></div>
+          {isMicOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
         </button>
 
         <button
