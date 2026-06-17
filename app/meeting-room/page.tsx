@@ -50,6 +50,7 @@ import { buildMeetingLink } from "@/lib/meet-link";
 import type { Meeting } from "@/types/meeting";
 
 const DEVICE_PREFERENCES_KEY = "meet-device-preferences";
+const MEETING_CLIENT_IDS_KEY = "meet-client-ids";
 
 type MeetingState =
   | "lobby"
@@ -145,6 +146,28 @@ const storeDevicePreference = (
     DEVICE_PREFERENCES_KEY,
     JSON.stringify({ ...current, [key]: deviceId })
   );
+};
+
+const getMeetingClientId = (meetingCode: string) => {
+  if (typeof window === "undefined") return "";
+
+  try {
+    const raw = localStorage.getItem(MEETING_CLIENT_IDS_KEY);
+    const ids = raw ? JSON.parse(raw) as Record<string, string> : {};
+    if (ids[meetingCode]) return ids[meetingCode];
+
+    const nextId =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(
+      MEETING_CLIENT_IDS_KEY,
+      JSON.stringify({ ...ids, [meetingCode]: nextId })
+    );
+    return nextId;
+  } catch {
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
 };
 
 const getMediaDeviceLabel = (
@@ -957,6 +980,7 @@ export default function MeetingRoom() {
       email: isAuthenticated ? identity.email : undefined,
       image: isAuthenticated ? identity.image : undefined,
       token: token || undefined,
+      clientId: meetingCode ? getMeetingClientId(meetingCode) : undefined,
       isMicOn,
       isCameraOn,
     };
@@ -1820,74 +1844,26 @@ export default function MeetingRoom() {
   }
 
   if (meetingState === "waiting") {
-    if (!isAuthenticated) {
-      return (
-        <GuestWaitingLobby
-          displayName={resolvedDisplayName}
-          videoRef={localVideoRef}
-          isMicOn={isMicOn}
-          isCameraOn={isCameraOn}
-          audioInputDevices={audioInputDevices}
-          audioOutputDevices={audioOutputDevices}
-          videoInputDevices={videoInputDevices}
-          selectedAudioInputId={selectedAudioInputId}
-          selectedAudioOutputId={selectedAudioOutputId}
-          selectedVideoInputId={selectedVideoInputId}
-          onSelectAudioInput={(deviceId) => void handleSelectAudioInput(deviceId)}
-          onSelectAudioOutput={handleSelectAudioOutput}
-          onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
-          onToggleMic={handleToggleMic}
-          onToggleCamera={handleToggleCamera}
-          onLeave={handleCancelJoinRequest}
-        />
-      );
-    }
-
     return (
-      <div className="fixed inset-0 flex flex-col bg-[#202124] text-white">
-        <main className="flex flex-1 flex-col items-center justify-center gap-8 px-4 pb-8">
-          <div className="flex max-w-[520px] items-center justify-center gap-3 text-center">
-            <span
-              className="inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-[#8ab4f8] border-t-transparent"
-              aria-hidden
-            />
-            <p className="text-[15px] leading-6 text-white/90 sm:text-base">
-              Please wait until a meeting host brings you into the call
-            </p>
-          </div>
-
-          <div className="relative w-full max-w-md overflow-hidden rounded-xl bg-[#3c4043] aspect-video meet-video-box">
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              className={`h-full w-full object-cover ${isCameraOn ? "block" : "hidden"}`}
-            />
-            {!isCameraOn && (
-              <div className="absolute inset-0 flex items-center justify-center">
-                <MeetAvatar
-                  name={resolvedDisplayName}
-                  email={identity.email}
-                  image={identity.image}
-                  size="xl"
-                />
-              </div>
-            )}
-            <div className="absolute bottom-2 left-3 truncate text-xs text-white">
-              {resolvedDisplayName}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={handleCancelJoinRequest}
-            className="rounded-full border border-white/20 px-6 py-2.5 text-sm font-medium text-[#8ab4f8] transition-colors duration-[180ms] hover:bg-white/8"
-          >
-            Cancel request
-          </button>
-        </main>
-      </div>
+      <GuestWaitingLobby
+        displayName={resolvedDisplayName}
+        image={isAuthenticated ? identity.image : undefined}
+        videoRef={localVideoRef}
+        isMicOn={isMicOn}
+        isCameraOn={isCameraOn}
+        audioInputDevices={audioInputDevices}
+        audioOutputDevices={audioOutputDevices}
+        videoInputDevices={videoInputDevices}
+        selectedAudioInputId={selectedAudioInputId}
+        selectedAudioOutputId={selectedAudioOutputId}
+        selectedVideoInputId={selectedVideoInputId}
+        onSelectAudioInput={(deviceId) => void handleSelectAudioInput(deviceId)}
+        onSelectAudioOutput={handleSelectAudioOutput}
+        onSelectVideoInput={(deviceId) => void handleSelectVideoInput(deviceId)}
+        onToggleMic={handleToggleMic}
+        onToggleCamera={handleToggleCamera}
+        onLeave={handleCancelJoinRequest}
+      />
     );
   }
 
@@ -1942,7 +1918,7 @@ export default function MeetingRoom() {
   // UI-only: does not affect any meeting logic.
   // Use deduped active participants (exclude waiting room) for counts and layouts
   const activeParticipants = dedupeParticipants(participants).filter((p) => {
-    const status = (p as any).status ?? null;
+    const status = (p as { status?: string }).status ?? null;
     return status !== "IN_WAITING_ROOM";
   });
   const raisedHandNotifications = [

@@ -101,6 +101,27 @@ export class MeetingPeerSession {
   private pendingOffers = new Set<string>();
   private offerDebounceTimer: ReturnType<typeof setTimeout> | null = null;
   private offerFlushResolvers: Array<() => void> = [];
+  private joinIdentity: {
+    displayName: string;
+    email?: string;
+    image?: string;
+    token?: string;
+    clientId?: string;
+    isMicOn?: boolean;
+    isCameraOn?: boolean;
+  } | null = null;
+  private lastSocketId = "";
+  private readonly handleSocketConnect = () => {
+    if (!this.isSessionActive || !this.joinIdentity) return;
+    if (this.socket.id === this.lastSocketId) return;
+
+    console.log("[WebRTC:Mesh] socket reconnected, restoring meeting session");
+    this.lastSocketId = this.socket.id || "";
+    for (const [socketId] of [...this.peers.keys()]) {
+      this.removePeer(socketId);
+    }
+    this.socket.emit("join-request", { roomId: this.roomId, ...this.joinIdentity });
+  };
 
   constructor(
     private readonly roomId: string,
@@ -126,6 +147,7 @@ export class MeetingPeerSession {
     email?: string;
     image?: string;
     token?: string;
+    clientId?: string;
     isMicOn?: boolean;
     isCameraOn?: boolean;
   }): Promise<void> {
@@ -135,9 +157,11 @@ export class MeetingPeerSession {
     }
 
     this.isStarting = true;
+    this.joinIdentity = identity;
 
     try {
       await this.waitForSocket();
+      this.lastSocketId = this.socket.id || "";
 
       // Use the static configured STUN servers
       this.iceServers = PEER_CONNECTION_CONFIG.iceServers || [{ urls: "stun:stun.l.google.com:19302" }];
@@ -396,6 +420,7 @@ export class MeetingPeerSession {
     email?: string;
     image?: string;
     token?: string;
+    clientId?: string;
     isMicOn?: boolean;
     isCameraOn?: boolean;
   }): void {
@@ -797,6 +822,8 @@ export class MeetingPeerSession {
   }
 
   private bindSocketEvents(): void {
+    this.socket.on("connect", this.handleSocketConnect);
+
     // 1. Waiting room / Approval events
     this.socket.on("waiting-room", () => {
       console.log("[WebRTC:Mesh] waiting-room event received");
@@ -976,6 +1003,7 @@ export class MeetingPeerSession {
   }
 
   private unregisterSocketEvents(): void {
+    this.socket.off("connect", this.handleSocketConnect);
     this.socket.off("waiting-room");
     this.socket.off("already-in-meeting");
     this.socket.off("join-approved");
