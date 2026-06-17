@@ -189,11 +189,14 @@ function PreviewControls({
             isMicOn ? "meet-lobby-control-on" : "meet-lobby-control-off",
           ].join(" ")}
         >
-          <span className="flex items-center justify-center gap-1">
+          <span className="flex items-center justify-center gap-1.5">
+            <VoiceActivityIndicator
+              level={micLevel}
+              active={isMicOn}
+              size="md"
+              variant="inline"
+            />
             {isMicOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
-            {isMicOn && (
-              <VoiceActivityIndicator level={micLevel} size="md" variant="inline" />
-            )}
           </span>
         </button>
 

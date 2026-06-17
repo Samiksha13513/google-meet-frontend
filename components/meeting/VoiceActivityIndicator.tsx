@@ -1,25 +1,49 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+
+export type VoiceActivityLevelStore = {
+  getSnapshot: () => number;
+  subscribe: (listener: () => void) => () => void;
+};
+
 type VoiceActivityIndicatorProps = {
-  level: number;
+  level?: number;
+  levelStore?: VoiceActivityLevelStore;
   active?: boolean;
   size?: "sm" | "md";
   variant?: "badge" | "inline";
 };
 
+const subscribeToNothing = () => () => {};
+const getZeroSnapshot = () => 0;
+
 export function VoiceActivityIndicator({
-  level,
+  level = 0,
+  levelStore,
   active = true,
   size = "md",
   variant = "badge",
 }: VoiceActivityIndicatorProps) {
-  if (!active || level <= 0.04) return null;
-
-  const activeLevel = Math.min(1, level);
-  const base = size === "sm" ? 3 : 4;
-  const barHeights = [0.5, 0.8, 1].map((scale) =>
-    Math.round(base + activeLevel * (size === "sm" ? 10 : 12) * scale)
+  const subscribedLevel = useSyncExternalStore(
+    levelStore?.subscribe ?? subscribeToNothing,
+    levelStore?.getSnapshot ?? getZeroSnapshot,
+    getZeroSnapshot
   );
+  const displayLevel = levelStore ? subscribedLevel : level;
+  const activeLevel = active ? Math.min(1, Math.max(0, displayLevel)) : 0;
+  const isSpeaking = activeLevel > 0.045;
+  const dotSize = size === "sm" ? 3 : 4;
+  const maxBoost = size === "sm" ? 10 : 12;
+  const barHeights = [0.45, 0.72, 1].map((scale) =>
+    isSpeaking ? Math.round(dotSize + activeLevel * maxBoost * scale) : dotSize
+  );
+  const indicatorColor =
+    variant === "inline"
+      ? isSpeaking
+        ? "#8ab4f8"
+        : "rgba(138, 180, 248, 0.95)"
+      : "#202124";
 
   const bars = (
     <>
@@ -27,10 +51,16 @@ export function VoiceActivityIndicator({
         <span
           key={index}
           className={[
-            "w-[3px] rounded-full transition-[height] duration-[80ms] ease-out",
-            variant === "inline" ? "bg-white" : "bg-[#202124]",
+            "rounded-full transition-[height,opacity,transform] duration-[120ms] ease-out",
+            isSpeaking ? "meet-audio-wave-dot" : "",
           ].join(" ")}
-          style={{ height }}
+          style={{
+            width: dotSize,
+            height,
+            backgroundColor: indicatorColor,
+            opacity: isSpeaking ? 1 : 0.92,
+            animationDelay: `${index * 90}ms`,
+          }}
         />
       ))}
     </>
@@ -38,7 +68,7 @@ export function VoiceActivityIndicator({
 
   if (variant === "inline") {
     return (
-      <span className="inline-flex h-5 items-end justify-center gap-[2px]" aria-hidden>
+      <span className="inline-flex h-5 min-w-4 items-center justify-center gap-[3px]" aria-hidden>
         {bars}
       </span>
     );

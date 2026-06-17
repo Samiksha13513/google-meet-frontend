@@ -231,6 +231,37 @@ summary {
   background-color: #aecbfa;
 }
 
+.meet-reaction-btn {
+  -webkit-tap-highlight-color: transparent;
+  outline: none;
+}
+
+.meet-reaction-btn:focus,
+.meet-reaction-btn:active {
+  background-color: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+
+.meet-reaction-btn:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+@keyframes meetAudioWave {
+  0%, 100% {
+    transform: scaleY(0.65);
+  }
+
+  50% {
+    transform: scaleY(1.18);
+  }
+}
+
+.meet-audio-wave-dot {
+  transform-origin: center;
+  animation: meetAudioWave 520ms ease-in-out infinite;
+}
+
 .meet-control-btn-danger {
   background-color: #ea4335;
   color: #fff;

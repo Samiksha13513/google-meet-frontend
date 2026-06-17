@@ -225,9 +225,14 @@ export function GuestWaitingLobby({
               title={isMicOn ? "Turn off microphone" : "Turn on microphone"}
               className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isMicOn ? "meet-control-btn-neutral rounded-none" : "meet-control-btn-danger rounded-none"}`}
             >
-              <span className="flex items-center justify-center gap-1">
+              <span className="flex items-center justify-center gap-1.5">
+                <VoiceActivityIndicator
+                  level={micLevel}
+                  active={isMicOn}
+                  size="sm"
+                  variant="inline"
+                />
                 {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                {isMicOn && <VoiceActivityIndicator level={micLevel} size="sm" variant="inline" />}
               </span>
             </button>
             <button

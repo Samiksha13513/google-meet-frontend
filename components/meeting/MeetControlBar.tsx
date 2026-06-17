@@ -1,5 +1,6 @@
 "use client";
 
+import { memo } from "react";
 import type { LucideIcon } from "lucide-react";
 import {
   AlignJustify,
@@ -19,7 +20,10 @@ import {
   VideoOff,
 } from "lucide-react";
 
-import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
+import {
+  VoiceActivityIndicator,
+  type VoiceActivityLevelStore,
+} from "@/components/meeting/VoiceActivityIndicator";
 
 const REACTIONS = ["👍", "❤️", "😂", "🎉", "👏", "😮"];
 
@@ -38,7 +42,8 @@ type MeetControlBarProps = {
   isHandRaised: boolean;
   isHost: boolean;
   isMeetingLocked: boolean;
-  localMicLevel: number;
+  localMicLevel?: number;
+  localMicLevelStore?: VoiceActivityLevelStore;
   showChat: boolean;
   showParticipantsList: boolean;
   unreadMessages: number;
@@ -76,7 +81,7 @@ type MeetControlBarProps = {
   moreOptionsRef: React.RefObject<HTMLDivElement | null>;
 };
 
-export function MeetControlBar({
+export const MeetControlBar = memo(function MeetControlBar({
   isMicOn,
   isCameraOn,
   isScreenSharing,
@@ -84,6 +89,7 @@ export function MeetControlBar({
   isHost,
   isMeetingLocked,
   localMicLevel,
+  localMicLevelStore,
   showChat,
   showParticipantsList,
   unreadMessages,
@@ -160,15 +166,15 @@ export function MeetControlBar({
               aria-label={isMicOn ? "Turn off microphone" : "Turn on microphone"}
               aria-pressed={isMicOn}
             >
-              <span className="flex items-center justify-center gap-1">
+              <span className="flex items-center justify-center gap-1.5">
+                <VoiceActivityIndicator
+                  level={localMicLevel}
+                  levelStore={localMicLevelStore}
+                  active={isMicOn}
+                  size="sm"
+                  variant="inline"
+                />
                 {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-                {isMicOn && (
-                  <VoiceActivityIndicator
-                    level={localMicLevel}
-                    size="sm"
-                    variant="inline"
-                  />
-                )}
               </span>
             </button>
             <span className="meet-split-divider" aria-hidden />
@@ -254,7 +260,7 @@ export function MeetControlBar({
                   key={emoji}
                   type="button"
                   onClick={() => onReaction(emoji)}
-                  className="flex h-10 w-10 items-center justify-center rounded-full text-2xl transition-all duration-150 hover:scale-110 hover:bg-white/10"
+                  className="meet-reaction-btn flex h-10 w-10 items-center justify-center rounded-full bg-transparent text-2xl transition-all duration-150 hover:scale-110 hover:bg-white/10 active:bg-white/10 focus-visible:bg-white/10"
                   title={`Send ${emoji}`}
                 >
                   {emoji}
@@ -394,10 +400,10 @@ export function MeetControlBar({
             title="Host controls"
             aria-label="Host controls"
           >
-            <Shield className="h-5 w-5" />
+            {/* <Shield className="h-5 w-5" /> */}
           </button>
         )}
       </div>
     </div>
   );
-}
+});

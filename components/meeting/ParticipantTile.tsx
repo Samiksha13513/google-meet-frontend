@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { ScreenShare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Participant } from "@/types/meeting";
@@ -10,7 +11,7 @@ type ParticipantTileProps = {
   speaking?: boolean;
 };
 
-export function ParticipantTile({
+export const ParticipantTile = memo(function ParticipantTile({
   participant,
   pinned = false,
   speaking = false,
@@ -49,4 +50,4 @@ export function ParticipantTile({
       </div>
     </article>
   );
-}
+});

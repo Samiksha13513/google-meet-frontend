@@ -1,22 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function useMicLevel(
   stream: MediaStream | null | undefined,
   enabled: boolean
 ): number {
   const [level, setLevel] = useState(0);
+  const smoothedLevelRef = useRef(0);
+  const renderedLevelRef = useRef(0);
 
   useEffect(() => {
     if (!enabled || !stream) {
-      setLevel(0);
+      smoothedLevelRef.current = 0;
+      if (renderedLevelRef.current !== 0) {
+        renderedLevelRef.current = 0;
+        setLevel(0);
+      }
       return;
     }
 
     const audioTrack = stream.getAudioTracks()[0];
     if (!audioTrack || audioTrack.readyState === "ended") {
-      setLevel(0);
+      smoothedLevelRef.current = 0;
+      if (renderedLevelRef.current !== 0) {
+        renderedLevelRef.current = 0;
+        setLevel(0);
+      }
       return;
     }
 
@@ -38,7 +48,12 @@ export function useMicLevel(
         sum += data[i];
       }
       const average = sum / data.length / 255;
-      setLevel(average);
+      const smoothed = smoothedLevelRef.current * 0.72 + average * 0.28;
+      smoothedLevelRef.current = smoothed;
+      if (Math.abs(smoothed - renderedLevelRef.current) > 0.012) {
+        renderedLevelRef.current = smoothed;
+        setLevel(smoothed);
+      }
       rafId = window.requestAnimationFrame(tick);
     };
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, memo } from "react";
+import { useState, useEffect, useRef, memo, useCallback, useMemo } from "react";
 import {
   MonitorUp,
   Info,
@@ -35,6 +35,7 @@ import { AdmitGuestControl } from "@/components/meeting/AdmitGuestControl";
 import { HandLowerToast } from "@/components/meeting/HandLowerToast";
 import { HandRaiseNotifications } from "@/components/meeting/HandRaiseNotifications";
 import { MeetControlBar } from "@/components/meeting/MeetControlBar";
+import type { VoiceActivityLevelStore } from "@/components/meeting/VoiceActivityIndicator";
 import { MeetPersonAvatar } from "@/components/meeting/MeetPersonAvatar";
 import { MeetMicStatus } from "@/components/meeting/MeetMicStatus";
 import { PeoplePanel } from "@/components/meeting/PeoplePanel";
@@ -81,6 +82,19 @@ type ChatMessage = {
   senderName: string;
   senderEmail?: string;
   senderImage?: string;
+  message: string;
+  timestamp: number;
+};
+
+type ActivityMessage = {
+  id: string;
+  type:
+    | "participant-joined"
+    | "participant-left"
+    | "participant-removed"
+    | "screen-share-started"
+    | "screen-share-stopped";
+  socketId: string;
   message: string;
   timestamp: number;
 };
@@ -175,6 +189,17 @@ const getMediaDeviceLabel = (
   index: number,
   fallback: string
 ) => device.label || `${fallback} ${index + 1}`;
+
+const LAYOUT_OPTIONS: Array<{
+  id: MeetingLayout;
+  label: string;
+  icon: typeof LayoutGrid;
+}> = [
+  { id: "auto", label: "Auto", icon: LayoutGrid },
+  { id: "tiled", label: "Tiled", icon: Rows3 },
+  { id: "spotlight", label: "Spotlight", icon: Pin },
+  { id: "sidebar", label: "Sidebar", icon: PanelRight },
+];
 
 // Isolated Video element component to ensure stable stream attachments and avoid React playback resets
 const ParticipantVideo = memo(function ParticipantVideo({
@@ -323,6 +348,157 @@ const MeetAvatar = ({
   );
 };
 
+const useMeetingRenderData = ({
+  participants,
+  dedupeParticipants,
+  isHandRaised,
+  handLowerPrompt,
+  resolvedDisplayName,
+  isScreenSharing,
+  meetingLayout,
+  pinnedParticipantId,
+  showParticipantsList,
+  showChat,
+  participantSearch,
+  activityMessages,
+  messages,
+}: {
+  participants: Participant[];
+  dedupeParticipants: (items: Participant[]) => Participant[];
+  isHandRaised: boolean;
+  handLowerPrompt: boolean;
+  resolvedDisplayName: string;
+  isScreenSharing: boolean;
+  meetingLayout: MeetingLayout;
+  pinnedParticipantId: string | null;
+  showParticipantsList: boolean;
+  showChat: boolean;
+  participantSearch: string;
+  activityMessages: ActivityMessage[];
+  messages: ChatMessage[];
+}) => {
+  const activeParticipants = useMemo(() => dedupeParticipants(participants).filter((p) => {
+    const status = (p as { status?: string }).status ?? null;
+    return status !== "IN_WAITING_ROOM";
+  }), [dedupeParticipants, participants]);
+
+  const raisedHandNotifications = useMemo(() => [
+    ...(isHandRaised && !handLowerPrompt
+      ? [{ id: "local", name: resolvedDisplayName }]
+      : []),
+    ...activeParticipants
+      .filter((p) => p.isHandRaised)
+      .map((p) => ({ id: p.socketId, name: p.displayName })),
+  ], [activeParticipants, handLowerPrompt, isHandRaised, resolvedDisplayName]);
+
+  const totalConferencingUsers = activeParticipants.length + 1;
+  const isTwoUp = totalConferencingUsers === 2;
+
+  const sharingParticipant = useMemo(
+    () => participants.find((p) => p.isScreenSharing),
+    [participants]
+  );
+  const presenterId: string | null = isScreenSharing
+    ? "local"
+    : sharingParticipant?.socketId ?? null;
+  const effectiveLayout: MeetingLayout =
+    meetingLayout === "auto"
+      ? pinnedParticipantId || presenterId
+        ? totalConferencingUsers > 1 ? "sidebar" : "spotlight"
+        : totalConferencingUsers >= 7
+          ? "sidebar"
+          : "tiled"
+      : meetingLayout;
+  const layoutWantsStage =
+    effectiveLayout === "spotlight" || effectiveLayout === "sidebar";
+  const defaultStageParticipantId =
+    participants[0]?.socketId || "local";
+  const stageParticipantId =
+    pinnedParticipantId || presenterId || (layoutWantsStage ? defaultStageParticipantId : null);
+  const useStageLayout =
+    Boolean(stageParticipantId) && layoutWantsStage;
+
+  const orderedParticipants = useMemo(() => [...activeParticipants].sort((a, b) => {
+    if (a.socketId === pinnedParticipantId) return -1;
+    if (b.socketId === pinnedParticipantId) return 1;
+    if (a.socketId === presenterId) return -1;
+    if (b.socketId === presenterId) return 1;
+    if (a.isHost !== b.isHost) return a.isHost ? -1 : 1;
+    return 0;
+  }), [activeParticipants, pinnedParticipantId, presenterId]);
+
+  const visibleGridCount = totalConferencingUsers;
+  const sidePanelOpen = showParticipantsList || showChat;
+  const gridStyle: React.CSSProperties | undefined = useMemo(() => {
+    const gridColumnCount =
+      visibleGridCount <= 1
+        ? 1
+        : visibleGridCount <= 4
+          ? 2
+          : sidePanelOpen && visibleGridCount <= 6
+            ? 2
+            : visibleGridCount <= 9
+              ? 3
+              : sidePanelOpen
+                ? 3
+                : 4;
+    const gridRowCount = Math.ceil(visibleGridCount / gridColumnCount);
+    return isTwoUp
+      ? undefined
+      : {
+        gridTemplateColumns: `repeat(${gridColumnCount}, minmax(0, 1fr))`,
+        gridTemplateRows: `repeat(${gridRowCount}, minmax(0, 1fr))`,
+      };
+  }, [isTwoUp, sidePanelOpen, visibleGridCount]);
+
+  const filmstripParticipants = useMemo(
+    () => orderedParticipants.filter((p) => p.socketId !== stageParticipantId),
+    [orderedParticipants, stageParticipantId]
+  );
+
+  const filteredParticipants = useMemo(() => activeParticipants.filter((p) => {
+    if (!participantSearch.trim()) return true;
+    const query = participantSearch.toLowerCase();
+    return (
+      p.displayName.toLowerCase().includes(query) ||
+      (p.email?.toLowerCase().includes(query) ?? false)
+    );
+  }), [activeParticipants, participantSearch]);
+
+  const feedItems = useMemo(() => [
+    ...activityMessages.map((activity) => ({
+      kind: "activity" as const,
+      id: activity.id,
+      timestamp: activity.timestamp,
+      activity,
+    })),
+    ...messages.map((message, index) => ({
+      kind: "message" as const,
+      id: message.id || `${message.timestamp}-${index}`,
+      timestamp: message.timestamp,
+      message,
+    })),
+  ].sort((a, b) => a.timestamp - b.timestamp), [activityMessages, messages]);
+
+  return {
+    activeParticipants,
+    raisedHandNotifications,
+    totalConferencingUsers,
+    isTwoUp,
+    presenterId,
+    stageParticipantId,
+    useStageLayout,
+    orderedParticipants,
+    sidePanelOpen,
+    gridStyle,
+    filmstripParticipants,
+    showLocalInFilmstrip: stageParticipantId !== "local",
+    stageLayoutIsSpotlight: effectiveLayout === "spotlight",
+    filteredParticipants,
+    feedItems,
+  };
+};
+
 export default function MeetingRoom() {
   const router = useRouter();
   const params = useParams();
@@ -349,7 +525,6 @@ export default function MeetingRoom() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
   const [handLowerPrompt, setHandLowerPrompt] = useState(false);
-  const [localMicLevel, setLocalMicLevel] = useState(0);
   const [endedByHost, setEndedByHost] = useState(false);
 
   const [isHost, setIsHost] = useState(false);
@@ -378,7 +553,6 @@ export default function MeetingRoom() {
   const [participantLeftMessage, setParticipantLeftMessage] = useState<string | null>(null);
   const [copiedToast, setCopiedToast] = useState<string | null>(null);
   const [meetingData, setMeetingData] = useState<Meeting | null>(null);
-  const [, setMeetingDuration] = useState("0:00");
   const [showLeaveDialog, setShowLeaveDialog] = useState(false);
   const [showMoreOptionsMenu, setShowMoreOptionsMenu] = useState(false);
   const [isMeetingLocked, setIsMeetingLocked] = useState(false);
@@ -392,6 +566,7 @@ export default function MeetingRoom() {
 
   // Chat & Sidebars
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [activityMessages, setActivityMessages] = useState<ActivityMessage[]>([]);
   const [showChat, setShowChat] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -422,6 +597,19 @@ export default function MeetingRoom() {
   const lastLocalReactionRef = useRef<{ emoji: string; pendingEcho: boolean } | null>(null);
   const audioLevelsRef = useRef<Record<string, number>>({});
   const localMicLevelRef = useRef(0);
+  const localMicLevelListenersRef = useRef(new Set<() => void>());
+  const localMicLevelStore = useMemo<VoiceActivityLevelStore>(
+    () => ({
+      getSnapshot: () => localMicLevelRef.current,
+      subscribe: (listener) => {
+        localMicLevelListenersRef.current.add(listener);
+        return () => {
+          localMicLevelListenersRef.current.delete(listener);
+        };
+      },
+    }),
+    []
+  );
   const participantsRef = useRef<Participant[]>([]);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioMonitorsRef = useRef<Map<string, () => void>>(new Map());
@@ -429,6 +617,7 @@ export default function MeetingRoom() {
   const activeSpeakerRef = useRef<string | null>(null);
   const keepHandRaisedRef = useRef(false);
   const handRaiseTimersRef = useRef<{ prompt?: number; lower?: number }>({});
+  const activityIdsRef = useRef<Set<string>>(new Set());
 
   const emojiRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
@@ -484,7 +673,7 @@ export default function MeetingRoom() {
     delete audioLevelsRef.current[socketId];
   };
 
-  const clearHandRaiseTimers = () => {
+  const clearHandRaiseTimers = useCallback(() => {
     if (handRaiseTimersRef.current.prompt) {
       window.clearTimeout(handRaiseTimersRef.current.prompt);
     }
@@ -492,7 +681,7 @@ export default function MeetingRoom() {
       window.clearTimeout(handRaiseTimersRef.current.lower);
     }
     handRaiseTimersRef.current = {};
-  };
+  }, []);
 
   const resetInMeetingUiState = () => {
     setPinnedParticipantId(null);
@@ -527,13 +716,15 @@ export default function MeetingRoom() {
     });
     setJoinRequests([]);
     setMessages([]);
+    setActivityMessages([]);
+    activityIdsRef.current.clear();
     setUnreadMessages(0);
     sessionRef.current?.destroy();
     sessionRef.current = null;
     resetInMeetingUiState();
   };
 
-  const dedupeParticipants = (items: Participant[]) => {
+  const dedupeParticipants = useCallback((items: Participant[]) => {
     const bySocketId = new Map<string, Participant>();
     items.forEach((participant) => {
       if (!participant.socketId || participant.socketId === socket.id) return;
@@ -545,9 +736,9 @@ export default function MeetingRoom() {
       });
     });
     return Array.from(bySocketId.values());
-  };
+  }, []);
 
-  const upsertParticipant = (participant: Participant) => {
+  const upsertParticipant = useCallback((participant: Participant) => {
     if (!participant.socketId || participant.socketId === socket.id) return;
     setParticipants((prev) => {
       const existing = prev.find((item) => item.socketId === participant.socketId);
@@ -564,7 +755,7 @@ export default function MeetingRoom() {
       }
       return dedupeParticipants([...prev, participant]);
     });
-  };
+  }, [dedupeParticipants]);
 
   const cleanupAll = () => {
     clearScreenShareBindings();
@@ -701,31 +892,31 @@ export default function MeetingRoom() {
     storeDevicePreference("audioOutputId", deviceId);
   };
 
-  const handleToggleMic = () => {
+  const handleToggleMic = useCallback(() => {
     const next = !isMicOn;
     const stream = localStreamRef.current;
     stream?.getAudioTracks().forEach((t) => (t.enabled = next));
     setIsMicOn(next);
     sessionRef.current?.sendStatusUpdate(next, isCameraOn);
-  };
+  }, [isCameraOn, isMicOn]);
 
-  const handleToggleCamera = () => {
+  const handleToggleCamera = useCallback(() => {
     const next = !isCameraOn;
     const stream = localStreamRef.current;
     stream?.getVideoTracks().forEach((t) => (t.enabled = next));
     setIsCameraOn(next);
     sessionRef.current?.sendStatusUpdate(isMicOn, next);
-  };
+  }, [isCameraOn, isMicOn]);
 
-  const lowerHand = () => {
+  const lowerHand = useCallback(() => {
     setIsHandRaised(false);
     sessionRef.current?.sendRaiseHandUpdate(false);
     setHandLowerPrompt(false);
     keepHandRaisedRef.current = false;
     clearHandRaiseTimers();
-  };
+  }, [clearHandRaiseTimers]);
 
-  const handleToggleHandRaise = () => {
+  const handleToggleHandRaise = useCallback(() => {
     if (isHandRaised) {
       lowerHand();
       return;
@@ -733,19 +924,19 @@ export default function MeetingRoom() {
     keepHandRaisedRef.current = false;
     setIsHandRaised(true);
     sessionRef.current?.sendRaiseHandUpdate(true);
-  };
+  }, [isHandRaised, lowerHand]);
 
-  const handleKeepHandRaised = () => {
+  const handleKeepHandRaised = useCallback(() => {
     keepHandRaisedRef.current = true;
     setHandLowerPrompt(false);
     clearHandRaiseTimers();
-  };
+  }, [clearHandRaiseTimers]);
 
-  const endScreenShare = async () => {
+  const endScreenShare = async (notifyServer = true) => {
     if (!isScreenSharing && !screenStreamRef.current) return;
     clearScreenShareBindings();
     try {
-      await sessionRef.current?.stopScreenShare();
+      await sessionRef.current?.stopScreenShare(notifyServer);
     } catch (err) {
       console.error("[ScreenShare] stop failed:", err);
     }
@@ -814,7 +1005,7 @@ export default function MeetingRoom() {
     }
   };
 
-  const addReactionBubble = (
+  const addReactionBubble = useCallback((
     targetId: string,
     emoji: string,
     senderName: string,
@@ -840,9 +1031,9 @@ export default function MeetingRoom() {
         return { ...prev, [targetId]: next };
       });
     }, 3800);
-  };
+  }, []);
 
-  const triggerFloatingReaction = (
+  const triggerFloatingReaction = useCallback((
     emoji: string,
     senderName: string,
     senderImage?: string
@@ -854,9 +1045,9 @@ export default function MeetingRoom() {
     setTimeout(() => {
       setFloatingReactions((prev) => prev.filter((r) => r.id !== id));
     }, 4000);
-  };
+  }, []);
 
-  const handleReaction = (emoji: string) => {
+  const handleReaction = useCallback((emoji: string) => {
     lastLocalReactionRef.current = { emoji, pendingEcho: true };
     sessionRef.current?.sendReaction(emoji);
     triggerFloatingReaction(emoji, "You", isAuthenticated ? identity.image : undefined);
@@ -867,23 +1058,33 @@ export default function MeetingRoom() {
       }
     }, 2500);
     setShowEmojiPicker(false);
+  }, [addReactionBubble, identity.image, isAuthenticated, triggerFloatingReaction]);
+
+  const addActivityMessage = (activity: ActivityMessage) => {
+    if (activityIdsRef.current.has(activity.id)) return;
+    activityIdsRef.current.add(activity.id);
+    setActivityMessages((prev) => [...prev, activity].slice(-100));
+    if (!showChatRef.current) {
+      setParticipantLeftMessage(activity.message);
+      window.setTimeout(() => setParticipantLeftMessage(null), 2800);
+    }
   };
 
-  const handleSelectParticipant = (participantId: string) => {
+  const handleSelectParticipant = useCallback((participantId: string) => {
     setPinnedParticipantId((prev) => (prev === participantId ? prev : participantId));
     if (meetingLayout === "tiled") {
       setMeetingLayout("auto");
     }
-  };
+  }, [meetingLayout]);
 
-  const handleLayoutChange = (layout: MeetingLayout) => {
+  const handleLayoutChange = useCallback((layout: MeetingLayout) => {
     setMeetingLayout(layout);
     setShowLayoutMenu(false);
-  };
+  }, []);
 
-  const handleToggleParticipantPin = (participantId: string) => {
+  const handleToggleParticipantPin = useCallback((participantId: string) => {
     setPinnedParticipantId((prev) => (prev === participantId ? null : participantId));
-  };
+  }, []);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1223,6 +1424,7 @@ export default function MeetingRoom() {
       },
       onScreenShareStarted: (senderId) => {
         if (senderId === socket.id) {
+          setIsScreenSharing(true);
           setParticipants((prev) =>
             prev.map((p) => ({
               ...p,
@@ -1233,7 +1435,7 @@ export default function MeetingRoom() {
         }
 
         if (screenStreamRef.current) {
-          void endScreenShare();
+          void endScreenShare(false);
         }
 
         setParticipants((prev) =>
@@ -1250,6 +1452,15 @@ export default function MeetingRoom() {
             p.socketId === senderId ? { ...p, isScreenSharing: false } : p
           )
         );
+      },
+      onActivity: (data) => {
+        addActivityMessage(data);
+      },
+      onScreenShareForceStopped: (data) => {
+        void endScreenShare(false);
+        setScreenShareError(data.reason);
+        setParticipantLeftMessage(data.reason);
+        window.setTimeout(() => setParticipantLeftMessage(null), 4500);
       },
       onHandRaisedChanged: ({ senderId, isHandRaised }) => {
         setParticipants((prev) =>
@@ -1402,33 +1613,9 @@ export default function MeetingRoom() {
     validate();
   }, [meetingCode, router]);
 
-  // Meeting duration timer
-  useEffect(() => {
-    if (meetingState !== "inMeeting" || !meetingJoinedAtRef.current) return;
-
-    const formatDuration = (seconds: number) => {
-      const hrs = Math.floor(seconds / 3600);
-      const mins = Math.floor((seconds % 3600) / 60);
-      const secs = seconds % 60;
-      if (hrs > 0) {
-        return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-      }
-      return `${mins}:${String(secs).padStart(2, "0")}`;
-    };
-
-    const tick = () => {
-      if (!meetingJoinedAtRef.current) return;
-      const elapsed = Math.floor((Date.now() - meetingJoinedAtRef.current) / 1000);
-      setMeetingDuration(formatDuration(elapsed));
-    };
-
-    tick();
-    const interval = window.setInterval(tick, 1000);
-    return () => window.clearInterval(interval);
-  }, [meetingState]);
-
   // Sync clock time
   useEffect(() => {
+    let timeout: number | undefined;
     const update = () => {
       const now = new Date();
       setCurrentTime(
@@ -1438,10 +1625,13 @@ export default function MeetingRoom() {
           hour12: true,
         })
       );
+      const delay = 60_000 - (now.getSeconds() * 1000 + now.getMilliseconds());
+      timeout = window.setTimeout(update, delay);
     };
     update();
-    const interval = setInterval(update, 1000);
-    return () => clearInterval(interval);
+    return () => {
+      if (timeout) window.clearTimeout(timeout);
+    };
   }, []);
 
   // Dropdown closing triggers
@@ -1626,7 +1816,7 @@ export default function MeetingRoom() {
       const localLevel = audioLevelsRef.current.local || 0;
       if (Math.abs(localLevel - localMicLevelRef.current) > 0.008) {
         localMicLevelRef.current = localLevel;
-        setLocalMicLevel(localLevel);
+        localMicLevelListenersRef.current.forEach((listener) => listener());
       }
     }, 320);
 
@@ -1658,7 +1848,7 @@ export default function MeetingRoom() {
     return () => {
       clearHandRaiseTimers();
     };
-  }, [meetingState, isHandRaised]);
+  }, [clearHandRaiseTimers, isHandRaised, lowerHand, meetingState]);
 
   useEffect(() => {
     if (meetingState !== "inMeeting") return;
@@ -1690,7 +1880,7 @@ export default function MeetingRoom() {
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [meetingState, isHandRaised, isMicOn, isCameraOn]);
+  }, [handleToggleCamera, handleToggleHandRaise, handleToggleMic, meetingState]);
 
   useEffect(() => {
     if (meetingState !== "inMeeting") {
@@ -1727,6 +1917,33 @@ export default function MeetingRoom() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showSwitchHereModal, handleCancelSwitchHere]);
+
+  const handleToggleChatPanel = useCallback(() => {
+    setShowChat((prev) => !prev);
+    setShowParticipantsList(false);
+  }, []);
+
+  const handleToggleParticipantsPanel = useCallback(() => {
+    setShowParticipantsList((prev) => !prev);
+    setShowChat(false);
+  }, []);
+
+  const handleShowMeetingDetails = useCallback(() => {
+    setParticipantLeftMessage(`Meeting Link: ${buildMeetingLink(meetingCode || "")}`);
+    window.setTimeout(() => setParticipantLeftMessage(null), 5000);
+  }, [meetingCode]);
+
+  const handleOpenLeaveDialog = useCallback(() => {
+    setShowLeaveDialog(true);
+  }, []);
+
+  const handleToggleMeetingLock = useCallback(() => {
+    setIsMeetingLocked((prev) => !prev);
+  }, []);
+
+  const handleClosePeoplePanel = useCallback(() => {
+    setShowParticipantsList(false);
+  }, []);
 
   const switchHereModal = showSwitchHereModal ? (
     <div
@@ -1796,6 +2013,38 @@ export default function MeetingRoom() {
       </div>
     </div>
   ) : null;
+
+  const {
+    activeParticipants,
+    raisedHandNotifications,
+    totalConferencingUsers,
+    isTwoUp,
+    presenterId,
+    stageParticipantId,
+    useStageLayout,
+    orderedParticipants,
+    sidePanelOpen,
+    gridStyle,
+    filmstripParticipants,
+    showLocalInFilmstrip,
+    stageLayoutIsSpotlight,
+    filteredParticipants,
+    feedItems,
+  } = useMeetingRenderData({
+    participants,
+    dedupeParticipants,
+    isHandRaised,
+    handLowerPrompt,
+    resolvedDisplayName,
+    isScreenSharing,
+    meetingLayout,
+    pinnedParticipantId,
+    showParticipantsList,
+    showChat,
+    participantSearch,
+    activityMessages,
+    messages,
+  });
 
   // =========================
   // CONDITIONAL RENDER VIEWS
@@ -1917,84 +2166,11 @@ export default function MeetingRoom() {
   // Responsive grid sizing (Google Meet-like): auto-fit tiles without horizontal overflow.
   // UI-only: does not affect any meeting logic.
   // Use deduped active participants (exclude waiting room) for counts and layouts
-  const activeParticipants = dedupeParticipants(participants).filter((p) => {
-    const status = (p as { status?: string }).status ?? null;
-    return status !== "IN_WAITING_ROOM";
-  });
-  const raisedHandNotifications = [
-    ...(isHandRaised && !handLowerPrompt
-      ? [{ id: "local", name: resolvedDisplayName }]
-      : []),
-    ...activeParticipants
-      .filter((p) => p.isHandRaised)
-      .map((p) => ({ id: p.socketId, name: p.displayName })),
-  ];
-  const totalConferencingUsers = activeParticipants.length + 1; // Participants + local user
-  const isTwoUp = totalConferencingUsers === 2;
-  const layoutOptions: Array<{
-    id: MeetingLayout;
-    label: string;
-    icon: typeof LayoutGrid;
-  }> = [
-      { id: "auto", label: "Auto", icon: LayoutGrid },
-      { id: "tiled", label: "Tiled", icon: Rows3 },
-      { id: "spotlight", label: "Spotlight", icon: Pin },
-      { id: "sidebar", label: "Sidebar", icon: PanelRight },
-    ];
   const hasVisibleVideo = (
     stream: MediaStream | undefined,
     cameraOn: boolean,
     sharing: boolean
   ) => Boolean(stream && (cameraOn || sharing));
-
-  const sharingParticipant = participants.find((p) => p.isScreenSharing);
-  const presenterId: string | null = isScreenSharing
-    ? "local"
-    : sharingParticipant?.socketId ?? null;
-  const effectiveLayout: MeetingLayout =
-    meetingLayout === "auto"
-      ? pinnedParticipantId || presenterId
-        ? totalConferencingUsers > 1 ? "sidebar" : "spotlight"
-        : totalConferencingUsers >= 7
-          ? "sidebar"
-          : "tiled"
-      : meetingLayout;
-  const layoutWantsStage =
-    effectiveLayout === "spotlight" || effectiveLayout === "sidebar";
-  const defaultStageParticipantId =
-    participants[0]?.socketId || "local";
-  const stageParticipantId =
-    pinnedParticipantId || presenterId || (layoutWantsStage ? defaultStageParticipantId : null);
-  const useStageLayout =
-    Boolean(stageParticipantId) && layoutWantsStage;
-  const orderedParticipants = [...activeParticipants].sort((a, b) => {
-    if (a.socketId === pinnedParticipantId) return -1;
-    if (b.socketId === pinnedParticipantId) return 1;
-    if (a.socketId === presenterId) return -1;
-    if (b.socketId === presenterId) return 1;
-    return 0;
-  });
-  const visibleGridCount = totalConferencingUsers;
-  const sidePanelOpen = showParticipantsList || showChat;
-  const gridColumnCount =
-    visibleGridCount <= 1
-      ? 1
-      : visibleGridCount <= 4
-        ? 2
-        : sidePanelOpen && visibleGridCount <= 6
-          ? 2
-          : visibleGridCount <= 9
-            ? 3
-            : sidePanelOpen
-              ? 3
-              : 4;
-  const gridRowCount = Math.ceil(visibleGridCount / gridColumnCount);
-  const gridStyle: React.CSSProperties | undefined = isTwoUp
-    ? undefined
-    : {
-      gridTemplateColumns: `repeat(${gridColumnCount}, minmax(0, 1fr))`,
-      gridTemplateRows: `repeat(${gridRowCount}, minmax(0, 1fr))`,
-    };
   const presenterParticipant =
     stageParticipantId === "local" ? null : participants.find((p) => p.socketId === stageParticipantId);
   const presenterStream =
@@ -2015,10 +2191,6 @@ export default function MeetingRoom() {
         Boolean(presenterParticipant?.isCameraOn),
         Boolean(presenterParticipant?.isScreenSharing)
       );
-  const filmstripParticipants = orderedParticipants.filter((p) => p.socketId !== stageParticipantId);
-  const showLocalInFilmstrip = stageParticipantId !== "local";
-  const stageLayoutIsSpotlight = effectiveLayout === "spotlight";
-
   const renderReactionBubbles = (targetId: string, compact = false) => {
     const bubbles = reactionBubbles[targetId];
     if (!bubbles?.length) return null;
@@ -2060,10 +2232,10 @@ export default function MeetingRoom() {
       >
         <span className={compact ? "max-w-[90px] truncate" : "max-w-[140px] truncate"}>{name}</span>
         {handRaised && <Hand className="h-3 w-3 text-[#81c995]" aria-label="Hand raised" />}
-        {host && <Shield className="h-3.5 w-3.5 text-yellow-400" />}
+        {host && <Shield className="h-3.5 w-3.5 text-yellow-400" aria-label="Host" />}
         <MeetMicStatus isMicOn={micOn} compact />
         {screenSharing && <MonitorUp className="h-3.5 w-3.5 text-[#8ab4f8]" />}
-        {pinnedParticipantId === props.id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />}
+        {/* {pinnedParticipantId === props.id && <Pin className="h-3.5 w-3.5 text-[#8ab4f8]" />} */}
       </div>
     );
   };
@@ -2134,14 +2306,37 @@ export default function MeetingRoom() {
     return `${totalIncludingYou} people in call`;
   };
 
-  const filteredParticipants = activeParticipants.filter((p) => {
-    if (!participantSearch.trim()) return true;
-    const query = participantSearch.toLowerCase();
-    return (
-      p.displayName.toLowerCase().includes(query) ||
-      (p.email?.toLowerCase().includes(query) ?? false)
-    );
-  });
+  const audioDeviceMenu = (
+    <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+      {renderDeviceList(
+        "Microphone",
+        audioInputDevices,
+        selectedAudioInputId,
+        "Microphone",
+        (deviceId) => void handleSelectAudioInput(deviceId)
+      )}
+      <div className="my-2 h-px bg-white/10" />
+      {renderDeviceList(
+        "Speaker",
+        audioOutputDevices,
+        selectedAudioOutputId,
+        "Speaker",
+        handleSelectAudioOutput
+      )}
+    </div>
+  );
+
+  const videoDeviceMenu = (
+    <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+      {renderDeviceList(
+        "Camera",
+        videoInputDevices,
+        selectedVideoInputId,
+        "Camera",
+        (deviceId) => void handleSelectVideoInput(deviceId)
+      )}
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
@@ -2616,55 +2811,77 @@ export default function MeetingRoom() {
               </button>
             </div>
             <div ref={chatScrollRef} className="flex-1 overflow-y-auto p-4">
-              {messages.length === 0 ? (
+              {feedItems.length === 0 ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-white/40 text-xs text-center max-w-[200px] mx-auto leading-relaxed">
                   Messages are only visible to active call members and get removed when leaving.
                 </div>
               ) : (
                 <div className="flex flex-col gap-4">
-                  {messages.map((m, i) => (
-                    <div
-                      key={m.id || `${m.timestamp}-${i}`}
-                      className="group flex items-start gap-3 rounded-xl px-1 py-1 transition-colors hover:bg-white/5"
-                    >
-                      <MeetAvatar
-                        name={m.senderName}
-                        email={m.senderEmail}
-                        image={m.senderImage}
-                        size="sm"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2">
-                          <span className="truncate text-sm font-medium text-white/90">
-                            {m.senderId === socket.id ? "You" : m.senderName}
-                          </span>
-                          <span className="shrink-0 text-[11px] text-white/45">
-                            {new Date(m.timestamp).toLocaleTimeString([], {
+                  {feedItems.map((item) => {
+                    if (item.kind === "activity") {
+                      const activity = item.activity;
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center gap-2 rounded-xl px-1 py-1 text-xs text-white/55"
+                        >
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-white/25" />
+                          <span className="min-w-0 flex-1 truncate">{activity.message}</span>
+                          <span className="shrink-0 text-[11px] text-white/35">
+                            {new Date(activity.timestamp).toLocaleTimeString([], {
                               hour: "numeric",
                               minute: "2-digit",
                             })}
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => void handleCopyMessage(m.message)}
-                            className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8ab4f8] md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
-                            title="Copy text"
-                            aria-label="Copy message text"
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
                         </div>
-                        {m.senderEmail && (
-                          <div className="truncate text-[11px] text-white/45">
-                            {m.senderEmail}
+                      );
+                    }
+
+                    const m = item.message;
+                    return (
+                      <div
+                        key={item.id}
+                        className="group flex items-start gap-3 rounded-xl px-1 py-1 transition-colors hover:bg-white/5"
+                      >
+                        <MeetAvatar
+                          name={m.senderName}
+                          email={m.senderEmail}
+                          image={m.senderImage}
+                          size="sm"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="truncate text-sm font-medium text-white/90">
+                              {m.senderId === socket.id ? "You" : m.senderName}
+                            </span>
+                            <span className="shrink-0 text-[11px] text-white/45">
+                              {new Date(m.timestamp).toLocaleTimeString([], {
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void handleCopyMessage(m.message)}
+                              className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white/55 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8ab4f8] md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+                              title="Copy text"
+                              aria-label="Copy message text"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                            </button>
                           </div>
-                        )}
-                        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-5 text-white/85">
-                          {m.message}
-                        </p>
+                          {m.senderEmail && (
+                            <div className="truncate text-[11px] text-white/45">
+                              {m.senderEmail}
+                            </div>
+                          )}
+                          <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-5 text-white/85">
+                            {m.message}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2701,7 +2918,7 @@ export default function MeetingRoom() {
             participants={filteredParticipants}
             searchQuery={participantSearch}
             onSearchChange={setParticipantSearch}
-            onClose={() => setShowParticipantsList(false)}
+            onClose={handleClosePeoplePanel}
             onAdmit={handleAdmit}
             onDeny={handleDeny}
             onAdmitAll={handleAdmitAll}
@@ -2782,69 +2999,32 @@ export default function MeetingRoom() {
         isHandRaised={isHandRaised}
         isHost={isHost}
         isMeetingLocked={isMeetingLocked}
-        localMicLevel={localMicLevel}
+        localMicLevelStore={localMicLevelStore}
         showChat={showChat}
         showParticipantsList={showParticipantsList}
         unreadMessages={unreadMessages}
         screenShareSupported={screenShareSupport?.supported ?? true}
         screenShareReason={screenShareSupport?.reason}
         meetingLayout={meetingLayout}
-        layoutOptions={layoutOptions}
+        layoutOptions={LAYOUT_OPTIONS}
         showAudioDeviceMenu={showAudioDeviceMenu}
         showVideoDeviceMenu={showVideoDeviceMenu}
         showEmojiPicker={showEmojiPicker}
         showLayoutMenu={showLayoutMenu}
         showMoreOptionsMenu={showMoreOptionsMenu}
-        audioDeviceMenu={
-          <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
-            {renderDeviceList(
-              "Microphone",
-              audioInputDevices,
-              selectedAudioInputId,
-              "Microphone",
-              handleSelectAudioInput
-            )}
-            <div className="my-2 h-px bg-white/10" />
-            {renderDeviceList(
-              "Speaker",
-              audioOutputDevices,
-              selectedAudioOutputId,
-              "Speaker",
-              handleSelectAudioOutput
-            )}
-          </div>
-        }
-        videoDeviceMenu={
-          <div className="fixed bottom-24 left-1/2 z-[60] w-72 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
-            {renderDeviceList(
-              "Camera",
-              videoInputDevices,
-              selectedVideoInputId,
-              "Camera",
-              handleSelectVideoInput
-            )}
-          </div>
-        }
+        audioDeviceMenu={audioDeviceMenu}
+        videoDeviceMenu={videoDeviceMenu}
         onToggleMic={handleToggleMic}
         onToggleCamera={handleToggleCamera}
         onToggleScreenShare={() => void handleToggleScreenShare()}
         onToggleHandRaise={handleToggleHandRaise}
-        onToggleChat={() => {
-          setShowChat((prev) => !prev);
-          setShowParticipantsList(false);
-        }}
-        onToggleParticipants={() => {
-          setShowParticipantsList((prev) => !prev);
-          setShowChat(false);
-        }}
-        onShowMeetingDetails={() => {
-          setParticipantLeftMessage(`Meeting Link: ${buildMeetingLink(meetingCode || "")}`);
-          window.setTimeout(() => setParticipantLeftMessage(null), 5000);
-        }}
-        onLeave={() => setShowLeaveDialog(true)}
+        onToggleChat={handleToggleChatPanel}
+        onToggleParticipants={handleToggleParticipantsPanel}
+        onShowMeetingDetails={handleShowMeetingDetails}
+        onLeave={handleOpenLeaveDialog}
         onReaction={handleReaction}
         onLayoutChange={handleLayoutChange}
-        onToggleMeetingLock={() => setIsMeetingLocked((prev) => !prev)}
+        onToggleMeetingLock={handleToggleMeetingLock}
         setShowAudioDeviceMenu={setShowAudioDeviceMenu}
         setShowVideoDeviceMenu={setShowVideoDeviceMenu}
         setShowEmojiPicker={setShowEmojiPicker}
