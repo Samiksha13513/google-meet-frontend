@@ -79,7 +79,7 @@ export function VoiceActivityIndicator({
   return (
     <span
       className={[
-        "inline-flex items-end justify-center gap-[2px] rounded-full bg-[#8ab4f8] text-[#202124]",
+        "inline-flex items-center justify-center gap-[2px] rounded-full bg-[#8ab4f8] text-[#202124]",
         size === "sm" ? "h-7 w-7" : "h-8 w-8",
         className,
       ].join(" ")}
