@@ -189,12 +189,13 @@ function PreviewControls({
             isMicOn ? "meet-lobby-control-on" : "meet-lobby-control-off",
           ].join(" ")}
         >
-          <span className="flex items-center justify-center gap-1.5">
+          <span className="relative flex h-full w-full items-center justify-center">
             <VoiceActivityIndicator
               level={micLevel}
               active={isMicOn}
               size="md"
               variant="inline"
+              className="absolute left-[14px] top-1/2 -translate-y-1/2"
             />
             {isMicOn ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
           </span>
@@ -346,12 +347,12 @@ export function PreviewLobby({
     };
   }, []);
 
-  const handleSelectVisualEffect = (effect: VisualEffect) => {
+  function handleSelectVisualEffect(effect: VisualEffect) {
     setSelectedEffect(effect);
     if (typeof window !== "undefined") {
       localStorage.setItem(VISUAL_EFFECT_KEY, effect);
     }
-  };
+  }
 
   const others = participants.filter((p) => {
     const participantSocketId = (p as { socketId?: string; id?: string }).socketId ?? (p as { id?: string }).id ?? null;

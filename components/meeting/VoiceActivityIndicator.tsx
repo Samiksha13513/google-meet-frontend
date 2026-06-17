@@ -13,6 +13,7 @@ type VoiceActivityIndicatorProps = {
   active?: boolean;
   size?: "sm" | "md";
   variant?: "badge" | "inline";
+  className?: string;
 };
 
 const subscribeToNothing = () => () => {};
@@ -24,6 +25,7 @@ export function VoiceActivityIndicator({
   active = true,
   size = "md",
   variant = "badge",
+  className = "",
 }: VoiceActivityIndicatorProps) {
   const subscribedLevel = useSyncExternalStore(
     levelStore?.subscribe ?? subscribeToNothing,
@@ -68,7 +70,7 @@ export function VoiceActivityIndicator({
 
   if (variant === "inline") {
     return (
-      <span className="inline-flex h-5 min-w-4 items-center justify-center gap-[3px]" aria-hidden>
+      <span className={`inline-flex h-5 min-w-4 items-center justify-center gap-[3px] ${className}`.trim()} aria-hidden>
         {bars}
       </span>
     );
@@ -79,6 +81,7 @@ export function VoiceActivityIndicator({
       className={[
         "inline-flex items-end justify-center gap-[2px] rounded-full bg-[#8ab4f8] text-[#202124]",
         size === "sm" ? "h-7 w-7" : "h-8 w-8",
+        className,
       ].join(" ")}
       aria-hidden
     >
