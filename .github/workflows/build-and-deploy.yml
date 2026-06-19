@@ -1,4 +1,4 @@
-name: Build and Deploy (Node 20)
+name: Build (Node 20)
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   build:
-    name: Build on Node 20 and Deploy to Vercel
+    name: Build on Node 20
     runs-on: ubuntu-latest
 
     steps:
@@ -25,12 +25,3 @@ jobs:
         run: |
           export NODE_OPTIONS=--max-old-space-size=4096
           npm run build
-
-      - name: Deploy to Vercel
-        if: success()
-        uses: amondnet/vercel-action@v20
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: '--prod'
