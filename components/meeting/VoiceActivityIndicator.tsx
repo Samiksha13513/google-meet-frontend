@@ -19,6 +19,8 @@ type VoiceActivityIndicatorProps = {
 const subscribeToNothing = () => () => {};
 const getZeroSnapshot = () => 0;
 
+
+
 export function VoiceActivityIndicator({
   level = 0,
   levelStore,

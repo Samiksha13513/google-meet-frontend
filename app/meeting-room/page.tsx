@@ -35,6 +35,9 @@ import { AdmitGuestControl } from "@/components/meeting/AdmitGuestControl";
 import { HandLowerToast } from "@/components/meeting/HandLowerToast";
 import { HandRaiseNotifications } from "@/components/meeting/HandRaiseNotifications";
 import { MeetControlBar } from "@/components/meeting/MeetControlBar";
+import { VisualEffectsDrawer } from "@/components/visual-effects/VisualEffectsDrawer";
+import { useVisualEffectsPipeline } from "@/hooks/useVisualEffectsPipeline";
+import { useVisualEffectsStore } from "@/store/visualEffectsStore";
 import type { VoiceActivityLevelStore } from "@/components/meeting/VoiceActivityIndicator";
 import { MeetPersonAvatar } from "@/components/meeting/MeetPersonAvatar";
 import { MeetMicStatus } from "@/components/meeting/MeetMicStatus";
@@ -590,6 +593,10 @@ export default function MeetingRoom() {
   const [screenStreamForRender, setScreenStreamForRender] = useState<MediaStream | null>(null);
   const sessionRef = useRef<MeetingPeerSession | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const rawCameraTrackRef = useRef<MediaStreamTrack | null>(null);
+  const [rawCameraTrack, setRawCameraTrack] = useState<MediaStreamTrack | null>(null);
+  const isVisualEffectsDrawerOpen = useVisualEffectsStore((s) => s.isDrawerOpen);
+  const setVisualEffectsDrawerOpen = useVisualEffectsStore((s) => s.setDrawerOpen);
   const selectedAudioInputIdRef = useRef("");
   const selectedAudioOutputIdRef = useRef("");
   const selectedVideoInputIdRef = useRef("");
@@ -857,6 +864,24 @@ export default function MeetingRoom() {
     });
   };
 
+  const publishProcessedTrack = useCallback(
+    async (track: MediaStreamTrack | null) => {
+      const outbound = track ?? rawCameraTrackRef.current;
+      if (!outbound) return;
+      outbound.enabled = isCameraOn;
+      await replaceLocalMediaTrack("video", outbound);
+    },
+    [isCameraOn]
+  );
+
+  useVisualEffectsPipeline({
+    rawCameraTrack,
+    isCameraOn,
+    previewVideoRef: localVideoRef,
+    publishProcessedTrack: meetingState === "inMeeting" ? publishProcessedTrack : undefined,
+    active: meetingState === "inMeeting" && Boolean(rawCameraTrack),
+  });
+
   const handleSelectAudioInput = async (deviceId: string) => {
     try {
       const track = await getReplacementTrack("audioinput", deviceId || undefined);
@@ -876,7 +901,11 @@ export default function MeetingRoom() {
     try {
       const track = await getReplacementTrack("videoinput", deviceId || undefined);
       track.enabled = isCameraOn;
-      await replaceLocalMediaTrack("video", track);
+      rawCameraTrackRef.current = track;
+      setRawCameraTrack(track);
+      if (meetingState !== "inMeeting") {
+        await replaceLocalMediaTrack("video", track);
+      }
       setSelectedVideoInputId(deviceId);
       storeDevicePreference("videoInputId", deviceId);
       setMediaError(null);
@@ -1522,6 +1551,9 @@ export default function MeetingRoom() {
       stream.getAudioTracks().forEach((t) => (t.enabled = isMicOn));
       stream.getVideoTracks().forEach((t) => (t.enabled = isCameraOn));
       localStreamRef.current = stream;
+      const rawTrack = stream.getVideoTracks()[0] ?? null;
+      rawCameraTrackRef.current = rawTrack;
+      setRawCameraTrack(rawTrack);
       setLocalStreamForRender(stream);
       setMediaError(null);
       await refreshMediaDevices();
@@ -2340,6 +2372,10 @@ export default function MeetingRoom() {
 
   return (
     <div className="fixed inset-0 bg-[#202124] text-white flex flex-col font-sans select-none overflow-hidden">
+      <VisualEffectsDrawer
+        open={isVisualEffectsDrawerOpen}
+        onClose={() => setVisualEffectsDrawerOpen(false)}
+      />
       {/* Status toast */}
       {participantLeftMessage && (
         <div className="absolute top-16 left-1/2 z-[80] -translate-x-1/2 animate-fade-in">
@@ -3025,6 +3061,7 @@ export default function MeetingRoom() {
         onReaction={handleReaction}
         onLayoutChange={handleLayoutChange}
         onToggleMeetingLock={handleToggleMeetingLock}
+        onOpenVisualEffects={() => setVisualEffectsDrawerOpen(true)}
         setShowAudioDeviceMenu={setShowAudioDeviceMenu}
         setShowVideoDeviceMenu={setShowVideoDeviceMenu}
         setShowEmojiPicker={setShowEmojiPicker}

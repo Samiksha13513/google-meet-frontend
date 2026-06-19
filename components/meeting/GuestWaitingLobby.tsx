@@ -16,10 +16,9 @@ import {
 import { getDisplayInitial } from "@/lib/display-name";
 import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import { useMicLevel } from "@/hooks/useMicLevel";
-import { SelfieBackgroundEffect } from "@/webrtc/selfie-effects";
-
-const VISUAL_EFFECT_KEY = "meet-preview-visual-effect";
-type VisualEffect = "none" | "blur";
+import { useVisualEffectsStore } from "@/store/visualEffectsStore";
+import { VisualEffectsDrawer } from "@/components/visual-effects/VisualEffectsDrawer";
+import { useVisualEffectsPipeline } from "@/hooks/useVisualEffectsPipeline";
 
 type GuestWaitingLobbyProps = {
   displayName: string;
@@ -64,16 +63,35 @@ export function GuestWaitingLobby({
   onLeave,
 }: GuestWaitingLobbyProps) {
   const initial = getDisplayInitial(displayName);
-  const [openMenu, setOpenMenu] = useState<"audio" | "video" | "effects" | null>(null);
+  const [openMenu, setOpenMenu] = useState<"audio" | "video" | null>(null);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
-  const [selectedEffect, setSelectedEffect] = useState<VisualEffect>(() => {
-    if (typeof window === "undefined") return "none";
-    return localStorage.getItem(VISUAL_EFFECT_KEY) === "blur" ? "blur" : "none";
-  });
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const selfieEffectRef = useRef<SelfieBackgroundEffect | null>(null);
+  const isDrawerOpen = useVisualEffectsStore((s) => s.isDrawerOpen);
+  const setDrawerOpen = useVisualEffectsStore((s) => s.setDrawerOpen);
+  const effectsConfig = useVisualEffectsStore((s) => ({
+    selectedBackground: s.selectedBackground,
+    blurIntensity: s.blurIntensity,
+    appearanceFilter: s.appearanceFilter,
+    portraitLighting: s.portraitLighting,
+    beautyIntensity: s.beautyIntensity,
+  }));
   const micLevel = useMicLevel(previewStream, isMicOn);
-  const showProcessedPreview = isCameraOn && selectedEffect === "blur";
+  const rawCameraTrack = previewStream?.getVideoTracks()[0] ?? null;
+  const hasActiveEffects =
+    effectsConfig.selectedBackground !== "none" ||
+    effectsConfig.blurIntensity !== "none" ||
+    effectsConfig.appearanceFilter !== "none" ||
+    effectsConfig.portraitLighting !== "none" ||
+    effectsConfig.beautyIntensity > 0;
+  const showProcessedPreview = isCameraOn && hasActiveEffects;
+
+  useVisualEffectsPipeline({
+    rawCameraTrack,
+    isCameraOn,
+    previewVideoRef: videoRef,
+    previewCanvasRef,
+    active: isCameraOn,
+  });
 
   useEffect(() => {
     const syncStream = () => {
@@ -85,47 +103,6 @@ export function GuestWaitingLobby({
     const intervalId = window.setInterval(syncStream, 400);
     return () => window.clearInterval(intervalId);
   }, [videoRef]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    const canvas = previewCanvasRef.current;
-
-    if (selectedEffect !== "blur" || !isCameraOn || !video || !canvas) {
-      selfieEffectRef.current?.stop();
-      return;
-    }
-
-    let cancelled = false;
-    const effect = selfieEffectRef.current ?? new SelfieBackgroundEffect();
-    selfieEffectRef.current = effect;
-
-    void effect.startPreview(video, canvas).catch((error) => {
-      console.warn("[SelfieEffects] waiting preview failed:", error);
-      if (!cancelled) {
-        setSelectedEffect("none");
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      effect.stop();
-    };
-  }, [selectedEffect, isCameraOn, videoRef]);
-
-  useEffect(() => {
-    return () => {
-      selfieEffectRef.current?.destroy();
-      selfieEffectRef.current = null;
-    };
-  }, []);
-
-  const selectEffect = (effect: VisualEffect) => {
-    setSelectedEffect(effect);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(VISUAL_EFFECT_KEY, effect);
-    }
-    setOpenMenu(null);
-  };
 
   const renderDeviceMenu = (
     devices: MediaDeviceInfo[],
@@ -160,6 +137,7 @@ export function GuestWaitingLobby({
 
   return (
     <div className="fixed inset-0 flex flex-col bg-[#202124] text-white select-none overflow-hidden">
+      <VisualEffectsDrawer open={isDrawerOpen} onClose={() => setDrawerOpen(false)} />
       <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-32 pt-8">
         <div className="flex max-w-[520px] items-center justify-center gap-3 text-center">
           <span
@@ -284,38 +262,12 @@ export function GuestWaitingLobby({
             <button
               type="button"
               title="Apply visual effects"
-              aria-haspopup="menu"
-              aria-expanded={openMenu === "effects"}
-              onClick={() => setOpenMenu((prev) => (prev === "effects" ? null : "effects"))}
-              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${selectedEffect === "blur" ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
+              aria-haspopup="dialog"
+              onClick={() => setDrawerOpen(true)}
+              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${hasActiveEffects ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
             >
               <Sparkles className="h-5 w-5" />
             </button>
-            {openMenu === "effects" && (
-              <div role="menu" className="absolute bottom-[calc(100%+10px)] left-1/2 z-50 w-48 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl">
-                {([
-                  ["none", "No effect"],
-                  ["blur", "Blur background"],
-                ] as Array<[VisualEffect, string]>).map(([effect, label]) => (
-                  <button
-                    key={effect}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={selectedEffect === effect}
-                    onClick={() => selectEffect(effect)}
-                    className={[
-                      "flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-white/10",
-                      selectedEffect === effect ? "bg-[#8ab4f8] text-[#202124]" : "text-white/90",
-                    ].join(" ")}
-                  >
-                    <span>{label}</span>
-                    {selectedEffect === effect && (
-                      <span aria-hidden className="h-2 w-2 rounded-full bg-current" />
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           <button

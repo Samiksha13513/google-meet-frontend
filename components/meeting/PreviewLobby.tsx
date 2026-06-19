@@ -20,10 +20,9 @@ import { useMeetingStore } from "@/store/meeting-store";
 import { socket } from "@/lib/socket";
 import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import { useMicLevel } from "@/hooks/useMicLevel";
-import { SelfieBackgroundEffect } from "@/webrtc/selfie-effects";
-
-const VISUAL_EFFECT_KEY = "meet-preview-visual-effect";
-type VisualEffect = "none" | "blur";
+import { useVisualEffectsStore } from "@/store/visualEffectsStore";
+import { VisualEffectsDrawer } from "@/components/visual-effects/VisualEffectsDrawer";
+import { useVisualEffectsPipeline } from "@/hooks/useVisualEffectsPipeline";
 
 type PreviewLobbyProps = {
   displayName: string;
@@ -161,22 +160,19 @@ function PreviewControls({
   isMicOn,
   isCameraOn,
   micLevel,
-  selectedEffect,
   onToggleMic,
   onToggleCamera,
-  onSelectVisualEffect,
+  onOpenVisualEffects,
+  hasActiveEffects,
 }: {
   isMicOn: boolean;
   isCameraOn: boolean;
   micLevel: number;
-  selectedEffect: VisualEffect;
   onToggleMic: () => void;
   onToggleCamera: () => void;
-  onSelectVisualEffect: (effect: VisualEffect) => void;
+  onOpenVisualEffects: () => void;
+  hasActiveEffects: boolean;
 }) {
-  const [showEffects, setShowEffects] = useState(false);
-  const isVisualEffectsOn = selectedEffect !== "none";
-
   return (
     <>
       <div className="absolute bottom-4 left-4 flex items-center justify-center">
@@ -216,48 +212,16 @@ function PreviewControls({
 
       <button
         type="button"
-        onClick={() => setShowEffects((prev) => !prev)}
+        onClick={onOpenVisualEffects}
         title="Apply visual effects"
-        aria-haspopup="menu"
-        aria-expanded={showEffects}
+        aria-haspopup="dialog"
         className={[
           "meet-lobby-control meet-lobby-control-on absolute bottom-4 right-4 h-12 w-12",
-          isVisualEffectsOn ? "bg-white/25 ring-2 ring-white/70" : "",
+          hasActiveEffects ? "bg-white/25 ring-2 ring-white/70" : "",
         ].join(" ")}
       >
         <Sparkles className="h-5 w-5" />
       </button>
-      {showEffects && (
-        <div
-          role="menu"
-          className="absolute bottom-[76px] right-4 z-40 w-48 rounded-2xl border border-white/15 bg-[#303134] p-2 text-white shadow-2xl"
-        >
-          {([
-            ["none", "No effect"],
-            ["blur", "Blur background"],
-          ] as Array<[VisualEffect, string]>).map(([effect, label]) => (
-            <button
-              key={effect}
-              type="button"
-              role="menuitemradio"
-              aria-checked={selectedEffect === effect}
-              onClick={() => {
-                onSelectVisualEffect(effect);
-                setShowEffects(false);
-              }}
-              className={[
-                "flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition-colors hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#8ab4f8]",
-                selectedEffect === effect ? "bg-[#8ab4f8] text-[#202124]" : "text-white/90",
-              ].join(" ")}
-            >
-              <span>{label}</span>
-              {selectedEffect === effect && (
-                <span aria-hidden className="h-2 w-2 rounded-full bg-current" />
-              )}
-            </button>
-          ))}
-        </div>
-      )}
     </>
   );
 }
@@ -293,15 +257,34 @@ export function PreviewLobby({
     (isAuthenticated ? "Signed-in user" : "");
   const initial = getDisplayInitial(label || "Guest");
   const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
-  const [selectedEffect, setSelectedEffect] = useState<VisualEffect>(() => {
-    if (typeof window === "undefined") return "none";
-    return localStorage.getItem(VISUAL_EFFECT_KEY) === "blur" ? "blur" : "none";
-  });
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const selfieEffectRef = useRef<SelfieBackgroundEffect | null>(null);
+  const isDrawerOpen = useVisualEffectsStore((s) => s.isDrawerOpen);
+  const setDrawerOpen = useVisualEffectsStore((s) => s.setDrawerOpen);
+  const effectsConfig = useVisualEffectsStore((s) => ({
+    selectedBackground: s.selectedBackground,
+    blurIntensity: s.blurIntensity,
+    appearanceFilter: s.appearanceFilter,
+    portraitLighting: s.portraitLighting,
+    beautyIntensity: s.beautyIntensity,
+  }));
   const participants = useMeetingStore((s) => s.participants || []);
   const micLevel = useMicLevel(previewStream, isMicOn);
+  const rawCameraTrack = previewStream?.getVideoTracks()[0] ?? null;
+  const hasActiveEffects =
+    effectsConfig.selectedBackground !== "none" ||
+    effectsConfig.blurIntensity !== "none" ||
+    effectsConfig.appearanceFilter !== "none" ||
+    effectsConfig.portraitLighting !== "none" ||
+    effectsConfig.beautyIntensity > 0;
+
+  useVisualEffectsPipeline({
+    rawCameraTrack,
+    isCameraOn,
+    previewVideoRef: videoRef,
+    previewCanvasRef,
+    active: isCameraOn,
+  });
 
   useEffect(() => {
     const syncStream = () => {
@@ -313,46 +296,6 @@ export function PreviewLobby({
     const intervalId = window.setInterval(syncStream, 400);
     return () => window.clearInterval(intervalId);
   }, [videoRef, isCameraOn, isMicOn]);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    const canvas = previewCanvasRef.current;
-
-    if (selectedEffect !== "blur" || !isCameraOn || !video || !canvas) {
-      selfieEffectRef.current?.stop();
-      return;
-    }
-
-    let cancelled = false;
-    const effect = selfieEffectRef.current ?? new SelfieBackgroundEffect();
-    selfieEffectRef.current = effect;
-
-    void effect.startPreview(video, canvas).catch((error) => {
-      console.warn("[SelfieEffects] preview failed:", error);
-      if (!cancelled) {
-        handleSelectVisualEffect("none");
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      effect.stop();
-    };
-  }, [selectedEffect, isCameraOn, videoRef]);
-
-  useEffect(() => {
-    return () => {
-      selfieEffectRef.current?.destroy();
-      selfieEffectRef.current = null;
-    };
-  }, []);
-
-  function handleSelectVisualEffect(effect: VisualEffect) {
-    setSelectedEffect(effect);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(VISUAL_EFFECT_KEY, effect);
-    }
-  }
 
   const others = participants.filter((p) => {
     const participantSocketId = (p as { socketId?: string; id?: string }).socketId ?? (p as { id?: string }).id ?? null;
@@ -382,7 +325,7 @@ export function PreviewLobby({
     ? !isJoining && !mediaError
     : !isJoining && !mediaError && Boolean(customDisplayName.trim());
 
-  const showProcessedPreview = isCameraOn && selectedEffect === "blur";
+  const showProcessedPreview = isCameraOn && hasActiveEffects;
 
   const previewCard = (
     <div className="relative aspect-video w-full overflow-hidden meet-video-box bg-[#3c4043]">
@@ -433,10 +376,10 @@ export function PreviewLobby({
         isMicOn={isMicOn}
         isCameraOn={isCameraOn}
         micLevel={micLevel}
-        selectedEffect={selectedEffect}
         onToggleMic={onToggleMic}
         onToggleCamera={onToggleCamera}
-        onSelectVisualEffect={handleSelectVisualEffect}
+        onOpenVisualEffects={() => setDrawerOpen(true)}
+        hasActiveEffects={hasActiveEffects}
       />
     </div>
   );
@@ -481,6 +424,7 @@ export function PreviewLobby({
 
   return (
     <div className="fixed inset-0 flex flex-col bg-white text-[#202124]">
+      <VisualEffectsDrawer open={isDrawerOpen} onClose={() => setDrawerOpen(false)} />
       <header className="flex h-16 shrink-0 items-center justify-between px-3 sm:px-6">
         <Image
           src={MEET_LOGO_URL}

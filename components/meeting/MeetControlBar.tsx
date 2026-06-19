@@ -15,6 +15,7 @@ import {
   Phone,
   Shield,
   Smile,
+  Sparkles,
   Users,
   Video,
   VideoOff,
@@ -69,6 +70,7 @@ type MeetControlBarProps = {
   onReaction: (emoji: string) => void;
   onLayoutChange: (layout: MeetingLayout) => void;
   onToggleMeetingLock: () => void;
+  onOpenVisualEffects?: () => void;
   setShowAudioDeviceMenu: (open: boolean) => void;
   setShowVideoDeviceMenu: (open: boolean) => void;
   setShowEmojiPicker: (open: boolean) => void;
@@ -115,6 +117,7 @@ export const MeetControlBar = memo(function MeetControlBar({
   onReaction,
   onLayoutChange,
   onToggleMeetingLock,
+  onOpenVisualEffects,
   setShowAudioDeviceMenu,
   setShowVideoDeviceMenu,
   setShowEmojiPicker,
@@ -287,6 +290,19 @@ export const MeetControlBar = memo(function MeetControlBar({
           </button>
           {showMoreOptionsMenu && (
             <div className="fixed bottom-20 left-1/2 z-[60] w-56 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#303134] p-2 shadow-2xl animate-fade-in">
+              {onOpenVisualEffects && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMoreOptionsMenu(false);
+                    onOpenVisualEffects();
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm text-white/85 transition-colors hover:bg-white/10"
+                >
+                  <Sparkles className="h-4 w-4 shrink-0" />
+                  <span>Apply visual effects</span>
+                </button>
+              )}
               <div className="relative" ref={layoutRef}>
                 <button
                   type="button"
