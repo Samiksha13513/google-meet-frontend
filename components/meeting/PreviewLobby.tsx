@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Mic,
   MicOff,
-  Sparkles,
   Video,
   VideoOff,
   Volume2,
@@ -21,9 +20,6 @@ import { useMeetingStore } from "@/store/meeting-store";
 import { socket } from "@/lib/socket";
 import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import { useMicLevel } from "@/hooks/useMicLevel";
-import { useVisualEffectsStore } from "@/store/visualEffectsStore";
-import { VisualEffectsDrawer } from "@/components/visual-effects/VisualEffectsDrawer";
-import { useVisualEffectsPipeline } from "@/hooks/useVisualEffectsPipeline";
 
 type PreviewLobbyProps = {
   displayName: string;
@@ -163,16 +159,12 @@ function PreviewControls({
   micLevel,
   onToggleMic,
   onToggleCamera,
-  onOpenVisualEffects,
-  hasActiveEffects,
 }: {
   isMicOn: boolean;
   isCameraOn: boolean;
   micLevel: number;
   onToggleMic: () => void;
   onToggleCamera: () => void;
-  onOpenVisualEffects: () => void;
-  hasActiveEffects: boolean;
 }) {
   return (
     <>
@@ -210,19 +202,6 @@ function PreviewControls({
           {isCameraOn ? <Video className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
         </button>
       </div>
-
-      <button
-        type="button"
-        onClick={onOpenVisualEffects}
-        title="Apply visual effects"
-        aria-haspopup="dialog"
-        className={[
-          "meet-lobby-control meet-lobby-control-on absolute bottom-4 right-4 h-12 w-12",
-          hasActiveEffects ? "bg-white/25 ring-2 ring-white/70" : "",
-        ].join(" ")}
-      >
-        <Sparkles className="h-5 w-5" />
-      </button>
     </>
   );
 }
@@ -259,35 +238,8 @@ export function PreviewLobby({
   const initial = getDisplayInitial(label || "Guest");
   const [openDeviceMenu, setOpenDeviceMenu] = useState<string | null>(null);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const isDrawerOpen = useVisualEffectsStore((s) => s.isDrawerOpen);
-  const setDrawerOpen = useVisualEffectsStore((s) => s.setDrawerOpen);
-  const effectsConfig = useVisualEffectsStore(
-    useShallow((s) => ({
-      selectedBackground: s.selectedBackground,
-      blurIntensity: s.blurIntensity,
-      appearanceFilter: s.appearanceFilter,
-      portraitLighting: s.portraitLighting,
-      beautyIntensity: s.beautyIntensity,
-    }))
-  );
   const participants = useMeetingStore((s) => s.participants || []);
   const micLevel = useMicLevel(previewStream, isMicOn);
-  const rawCameraTrack = previewStream?.getVideoTracks()[0] ?? null;
-  const hasActiveEffects =
-    effectsConfig.selectedBackground !== "none" ||
-    effectsConfig.blurIntensity !== "none" ||
-    effectsConfig.appearanceFilter !== "none" ||
-    effectsConfig.portraitLighting !== "none" ||
-    effectsConfig.beautyIntensity > 0;
-
-  useVisualEffectsPipeline({
-    rawCameraTrack,
-    isCameraOn,
-    previewVideoRef: videoRef,
-    previewCanvasRef,
-    active: isCameraOn,
-  });
 
   useEffect(() => {
     const syncStream = () => {
@@ -328,8 +280,6 @@ export function PreviewLobby({
     ? !isJoining && !mediaError
     : !isJoining && !mediaError && Boolean(customDisplayName.trim());
 
-  const showProcessedPreview = isCameraOn && hasActiveEffects;
-
   const previewCard = (
     <div className="relative aspect-video w-full overflow-hidden meet-video-box bg-[#3c4043]">
       <video
@@ -337,11 +287,7 @@ export function PreviewLobby({
         autoPlay
         muted
         playsInline
-        className={`h-full w-full object-cover ${isCameraOn && !showProcessedPreview ? "block" : "hidden"}`}
-      />
-      <canvas
-        ref={previewCanvasRef}
-        className={`h-full w-full object-cover ${showProcessedPreview ? "block" : "hidden"}`}
+        className={`h-full w-full object-cover ${isCameraOn ? "block" : "hidden"}`}
       />
 
       {!isCameraOn && (
@@ -381,8 +327,6 @@ export function PreviewLobby({
         micLevel={micLevel}
         onToggleMic={onToggleMic}
         onToggleCamera={onToggleCamera}
-        onOpenVisualEffects={() => setDrawerOpen(true)}
-        hasActiveEffects={hasActiveEffects}
       />
     </div>
   );
@@ -427,7 +371,6 @@ export function PreviewLobby({
 
   return (
     <div className="fixed inset-0 flex flex-col bg-white text-[#202124]">
-      <VisualEffectsDrawer open={isDrawerOpen} onClose={() => setDrawerOpen(false)} />
       <header className="flex h-16 shrink-0 items-center justify-between px-3 sm:px-6">
         <Image
           src={MEET_LOGO_URL}

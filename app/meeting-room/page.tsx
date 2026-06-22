@@ -2577,19 +2577,19 @@ export default function MeetingRoom() {
                     : "md:flex-col md:overflow-x-hidden md:overflow-y-auto md:w-44 lg:w-52 md:max-h-full md:pb-0",
                 ].join(" ")}
               >
-                {showLocalInFilmstrip && (
-                  <div
-                    className={[
-                      "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 cursor-pointer rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
-                      stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
-                      pinnedParticipantId === "local" ? "ring-2 ring-[#8ab4f8]" : "",
-                      activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
-                    ].join(" ")}
-                    onClick={() => handleSelectParticipant("local")}
-                    onDoubleClick={() => handleToggleParticipantPin("local")}
-                    title="Click to focus yourself"
-                  >
-                    {isCameraOn && !isScreenSharing ? (
+                    {showLocalInFilmstrip && (
+                    <div
+                      className={[
+                        "meet-tile relative h-24 w-36 sm:h-28 sm:w-44 md:h-28 shrink-0 cursor-pointer rounded-xl overflow-hidden bg-[#3c4043] border border-white/10",
+                        stageLayoutIsSpotlight ? "md:w-44" : "md:w-full",
+                        pinnedParticipantId === "local" ? "ring-2 ring-[#8ab4f8]" : "",
+                        activeSpeakerId === "local" ? "shadow-[0_0_0_3px_rgba(52,168,83,0.85)]" : "",
+                      ].join(" ")}
+                      onClick={() => handleSelectParticipant("local")}
+                      onDoubleClick={() => handleToggleParticipantPin("local")}
+                      title="Click to focus yourself"
+                    >
+                      {isCameraOn ? (
                       <video
                         ref={localVideoRef}
                         autoPlay
@@ -2697,7 +2697,7 @@ export default function MeetingRoom() {
                 onDoubleClick={() => handleToggleParticipantPin("local")}
                 title="Click to focus yourself"
               >
-                {isCameraOn && !isScreenSharing ? (
+                {isCameraOn ? (
                   <video
                     ref={localVideoRef}
                     autoPlay

@@ -6,20 +6,14 @@ import {
   Mic,
   MicOff,
   MoreHorizontal,
-  MoreVertical,
   Phone,
-  Sparkles,
   Video,
   VideoOff,
 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 
 import { getDisplayInitial } from "@/lib/display-name";
-import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
 import { useMicLevel } from "@/hooks/useMicLevel";
-import { useVisualEffectsStore } from "@/store/visualEffectsStore";
-import { VisualEffectsDrawer } from "@/components/visual-effects/VisualEffectsDrawer";
-import { useVisualEffectsPipeline } from "@/hooks/useVisualEffectsPipeline";
 
 type GuestWaitingLobbyProps = {
   displayName: string;
@@ -66,35 +60,7 @@ export function GuestWaitingLobby({
   const initial = getDisplayInitial(displayName);
   const [openMenu, setOpenMenu] = useState<"audio" | "video" | null>(null);
   const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const isDrawerOpen = useVisualEffectsStore((s) => s.isDrawerOpen);
-  const setDrawerOpen = useVisualEffectsStore((s) => s.setDrawerOpen);
-  const effectsConfig = useVisualEffectsStore(
-    useShallow((s) => ({
-      selectedBackground: s.selectedBackground,
-      blurIntensity: s.blurIntensity,
-      appearanceFilter: s.appearanceFilter,
-      portraitLighting: s.portraitLighting,
-      beautyIntensity: s.beautyIntensity,
-    }))
-  );
   const micLevel = useMicLevel(previewStream, isMicOn);
-  const rawCameraTrack = previewStream?.getVideoTracks()[0] ?? null;
-  const hasActiveEffects =
-    effectsConfig.selectedBackground !== "none" ||
-    effectsConfig.blurIntensity !== "none" ||
-    effectsConfig.appearanceFilter !== "none" ||
-    effectsConfig.portraitLighting !== "none" ||
-    effectsConfig.beautyIntensity > 0;
-  const showProcessedPreview = isCameraOn && hasActiveEffects;
-
-  useVisualEffectsPipeline({
-    rawCameraTrack,
-    isCameraOn,
-    previewVideoRef: videoRef,
-    previewCanvasRef,
-    active: isCameraOn,
-  });
 
   useEffect(() => {
     const syncStream = () => {
@@ -140,7 +106,6 @@ export function GuestWaitingLobby({
 
   return (
     <div className="fixed inset-0 flex flex-col bg-[#202124] text-white select-none overflow-hidden">
-      <VisualEffectsDrawer open={isDrawerOpen} onClose={() => setDrawerOpen(false)} />
       <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 pb-32 pt-8">
         <div className="flex max-w-[520px] items-center justify-center gap-3 text-center">
           <span
@@ -158,11 +123,7 @@ export function GuestWaitingLobby({
             autoPlay
             muted
             playsInline
-            className={`h-full w-full object-cover ${isCameraOn && !showProcessedPreview ? "block" : "hidden"}`}
-          />
-          <canvas
-            ref={previewCanvasRef}
-            className={`h-full w-full object-cover ${showProcessedPreview ? "block" : "hidden"}`}
+            className={`h-full w-full object-cover ${isCameraOn ? "block" : "hidden"}`}
           />
           {!isCameraOn && (
             <div className="absolute inset-0 flex items-center justify-center bg-[#3c4043]">
@@ -206,15 +167,7 @@ export function GuestWaitingLobby({
               title={isMicOn ? "Turn off microphone" : "Turn on microphone"}
               className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${isMicOn ? "meet-control-btn-neutral rounded-none" : "meet-control-btn-danger rounded-none"}`}
             >
-              <span className="flex items-center justify-center gap-1.5">
-                <VoiceActivityIndicator
-                  level={micLevel}
-                  active={isMicOn}
-                  size="sm"
-                  variant="inline"
-                />
-                {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
-              </span>
+              {isMicOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
             </button>
             <button
               type="button"
@@ -261,25 +214,6 @@ export function GuestWaitingLobby({
               renderDeviceMenu(videoInputDevices, selectedVideoInputId, "Camera", onSelectVideoInput)}
           </div>
 
-          <div className="relative">
-            <button
-              type="button"
-              title="Apply visual effects"
-              aria-haspopup="dialog"
-              onClick={() => setDrawerOpen(true)}
-              className={`meet-control-btn h-11 w-11 sm:h-12 sm:w-12 ${hasActiveEffects ? "meet-control-btn-active" : "meet-control-btn-neutral"}`}
-            >
-              <Sparkles className="h-5 w-5" />
-            </button>
-          </div>
-
-          <button
-            type="button"
-            title="More options"
-            className="meet-control-btn meet-control-btn-neutral h-11 w-11 sm:h-12 sm:w-12"
-          >
-            <MoreVertical className="h-5 w-5" />
-          </button>
 
           {/* Leave / cancel request */}
           <button
