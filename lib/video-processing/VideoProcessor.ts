@@ -76,12 +76,7 @@ export class VideoProcessor {
   }
 
   getProcessedStream(): MediaStream | null {
-    const stream = this.outputStream;
-    if (stream) {
-      const track = stream.getVideoTracks()[0];
-      console.log("[VP] getProcessedStream: stream=", stream, "track=", track ? {id: track.id, readyState: track.readyState, muted: track.muted, enabled: track.enabled} : null);
-    }
-    return stream;
+    return this.outputStream;
   }
 
   async init(): Promise<void> {
@@ -109,7 +104,6 @@ export class VideoProcessor {
     if (!this.displayCtx) throw new Error("VideoProcessor: preview context unavailable");
     this.sourceVideo = video;
     this.enabled = true;
-    console.log("[VP] startPreview: displayCanvas set, captureCanvas=", this.canvas, "displayCanvas=", displayCanvas);
     this.startLoop();
   }
 
@@ -124,7 +118,6 @@ export class VideoProcessor {
 
     if (!this.outputStream) {
       this.outputStream = this.canvas.captureStream(30);
-      console.log("[VP] start: captureStream created on this.canvas, stream=", this.outputStream, "tracks=", this.outputStream.getTracks().map(t => ({id: t.id, kind: t.kind, readyState: t.readyState})));
     }
 
     this.startLoop();
@@ -169,9 +162,6 @@ export class VideoProcessor {
       this.resizeCanvases(width, height);
 
       const targetCtx = this.displayCtx || this.ctx;
-      const targetCanvas = this.displayCanvas || this.canvas;
-
-      console.log("[VP] renderFrame: targetCanvas=", targetCanvas === this.displayCanvas ? "displayCanvas" : "this.canvas", "hasDisplayCanvas=", !!this.displayCanvas, "hasOutputStream=", !!this.outputStream);
 
       if (!this.needsProcessing()) {
         targetCtx.clearRect(0, 0, width, height);
@@ -196,21 +186,8 @@ export class VideoProcessor {
 
       this.drawProcessedFrame(targetCtx, video, mask, this.cachedFaceBox, width, height);
 
-      if (this.displayCanvas && this.displayCtx && targetCanvas !== this.canvas) {
+      if (this.displayCanvas && this.displayCtx) {
         this.ctx.drawImage(this.displayCanvas, 0, 0, width, height);
-        console.log("[VP] renderFrame: COPIED displayCanvas -> this.canvas for captureStream");
-      } else if (!this.displayCanvas) {
-        console.log("[VP] renderFrame: NO displayCanvas, drawing directly to this.canvas");
-      } else {
-        console.log("[VP] renderFrame: SKIPPED copy to this.canvas (targetCanvas IS this.canvas or no displayCtx)");
-      }
-
-      // Log capture canvas state
-      if (this.outputStream) {
-        const captureTrack = this.outputStream.getVideoTracks()[0];
-        if (captureTrack) {
-          console.log("[VP] renderFrame: captureTrack readyState=", captureTrack.readyState, "muted=", captureTrack.muted, "enabled=", captureTrack.enabled);
-        }
       }
     } finally {
       this.frameInFlight = false;
