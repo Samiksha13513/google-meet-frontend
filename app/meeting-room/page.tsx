@@ -836,6 +836,8 @@ export default function MeetingRoom() {
     const oldTrack =
       kind === "audio" ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
 
+    console.log("[PAGE] replaceLocalMediaTrack: kind=", kind, "oldTrack=", oldTrack ? {id: oldTrack.id, readyState: oldTrack.readyState} : null, "newTrack=", track ? {id: track.id, readyState: track.readyState, muted: track.muted, label: track.label} : null);
+
     if (sessionRef.current?.isActive()) {
       await sessionRef.current.replaceLocalTrack(kind, track);
     } else {
@@ -860,6 +862,7 @@ export default function MeetingRoom() {
       const nextStream = localStreamRef.current;
       if (!nextStream) return null;
       if (prev && streamsShareSameTracks(prev, nextStream)) return prev;
+      console.log("[PAGE] setLocalStreamForRender: updating from", prev ? {tracks: prev.getTracks().map(t => t.id)} : null, "to", {tracks: nextStream.getTracks().map(t => t.id)});
       return nextStream;
     });
   };
@@ -869,6 +872,7 @@ export default function MeetingRoom() {
       const outbound = track ?? rawCameraTrackRef.current;
       if (!outbound) return;
       outbound.enabled = isCameraOn;
+      console.log("[PAGE] publishProcessedTrack: publishing track=", outbound ? {id: outbound.id, kind: outbound.kind, readyState: outbound.readyState, muted: outbound.muted, label: outbound.label} : null, "isProcessed=", !!track);
       await replaceLocalMediaTrack("video", outbound);
     },
     [isCameraOn]
@@ -1719,9 +1723,13 @@ export default function MeetingRoom() {
     const stream = localStreamRef.current;
     if (stream && localVideoRef.current) {
       const video = localVideoRef.current;
+      const videoTrack = stream.getVideoTracks()[0];
+      const currentSrcObjectTracks = video.srcObject instanceof MediaStream ? video.srcObject.getTracks().map(t => t.id) : null;
+      console.log("[PAGE] syncLocalVideo: stream tracks=", stream.getTracks().map(t => ({id: t.id, kind: t.kind, readyState: t.readyState, label: t.label})), "current srcObject track=", currentSrcObjectTracks);
       // Avoid duplicate srcObject assignments to prevent flashes
       if (video.srcObject !== stream) {
         video.srcObject = stream;
+        console.log("[PAGE] syncLocalVideo: set srcObject to stream with track ids=", stream.getTracks().map(t => t.id));
       }
       // Ensure playback starts (some browsers need explicit play() calls)
       video.play().catch((err) => {

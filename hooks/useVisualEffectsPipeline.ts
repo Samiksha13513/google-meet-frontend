@@ -59,8 +59,10 @@ export function useVisualEffectsPipeline({
   const syncPublishedTrack = useCallback(
     async (track: MediaStreamTrack | null) => {
       if (!publishProcessedTrack) return;
+      console.log("[VFX] syncPublishedTrack: about to publish", track ? {id: track.id, kind: track.kind, readyState: track.readyState} : null);
       await publishProcessedTrack(track);
       publishedTrackRef.current = track;
+      console.log("[VFX] syncPublishedTrack: published successfully, current publishedTrack=", publishedTrackRef.current ? {id: publishedTrackRef.current.id} : null);
     },
     [publishProcessedTrack]
   );
@@ -82,23 +84,32 @@ export function useVisualEffectsPipeline({
       const previewCanvas = previewCanvasRef?.current;
       const previewVideo = previewVideoRef?.current ?? video;
 
+      console.log("[VFX] startPipeline: needsProcessing=", needsProcessing, "hasPreviewCanvas=", !!previewCanvas, "rawTrack=", rawCameraTrack ? {id: rawCameraTrack.id, readyState: rawCameraTrack.readyState, muted: rawCameraTrack.muted} : null);
+
       if (!needsProcessing) {
         processor.stop();
+        console.log("[VFX] startPipeline: no processing needed, publishing null (revert to raw)");
         await syncPublishedTrack(null);
         return;
       }
 
       if (previewCanvas) {
+        console.log("[VFX] startPipeline: using startPreview mode");
         await processor.startPreview(previewVideo, previewCanvas);
       } else {
+        console.log("[VFX] startPipeline: using start mode (no preview canvas)");
         await processor.start(video);
       }
 
       const output = processor.getProcessedStream();
       const processedTrack = output?.getVideoTracks()[0] ?? null;
+      console.log("[VFX] startPipeline: processedTrack=", processedTrack ? {id: processedTrack.id, readyState: processedTrack.readyState, muted: processedTrack.muted, enabled: processedTrack.enabled} : null);
       if (processedTrack) {
         processedTrack.enabled = isCameraOn;
+        console.log("[VFX] startPipeline: publishing processed track to WebRTC");
         await syncPublishedTrack(processedTrack);
+      } else {
+        console.log("[VFX] startPipeline: NO processed track available");
       }
     } finally {
       startingRef.current = false;
@@ -115,6 +126,7 @@ export function useVisualEffectsPipeline({
   ]);
 
   useEffect(() => {
+    console.log("[VFX] useEffect[config]: config changed, restarting pipeline");
     processorRef.current?.setConfig({ ...config, isEnabled: true });
     void startPipeline();
   }, [config, startPipeline]);
@@ -126,6 +138,7 @@ export function useVisualEffectsPipeline({
   }, [isCameraOn]);
 
   useEffect(() => {
+    console.log("[VFX] useEffect[rawCameraTrack/active]: rawCameraTrack or active changed, restarting pipeline");
     void startPipeline();
   }, [rawCameraTrack, active, startPipeline]);
 
