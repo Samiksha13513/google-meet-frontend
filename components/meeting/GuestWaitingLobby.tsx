@@ -12,6 +12,7 @@ import {
   Video,
   VideoOff,
 } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 
 import { getDisplayInitial } from "@/lib/display-name";
 import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
@@ -68,13 +69,15 @@ export function GuestWaitingLobby({
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawerOpen = useVisualEffectsStore((s) => s.isDrawerOpen);
   const setDrawerOpen = useVisualEffectsStore((s) => s.setDrawerOpen);
-  const effectsConfig = useVisualEffectsStore((s) => ({
-    selectedBackground: s.selectedBackground,
-    blurIntensity: s.blurIntensity,
-    appearanceFilter: s.appearanceFilter,
-    portraitLighting: s.portraitLighting,
-    beautyIntensity: s.beautyIntensity,
-  }));
+  const effectsConfig = useVisualEffectsStore(
+    useShallow((s) => ({
+      selectedBackground: s.selectedBackground,
+      blurIntensity: s.blurIntensity,
+      appearanceFilter: s.appearanceFilter,
+      portraitLighting: s.portraitLighting,
+      beautyIntensity: s.beautyIntensity,
+    }))
+  );
   const micLevel = useMicLevel(previewStream, isMicOn);
   const rawCameraTrack = previewStream?.getVideoTracks()[0] ?? null;
   const hasActiveEffects =

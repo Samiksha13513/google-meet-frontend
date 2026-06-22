@@ -16,6 +16,7 @@ import { getDisplayInitial } from "@/lib/display-name";
 import { MEET_LOGO_URL } from "@/lib/meet-brand";
 import { googleLogin } from "@/services/auth";
 import Image from "next/image";
+import { useShallow } from "zustand/react/shallow";
 import { useMeetingStore } from "@/store/meeting-store";
 import { socket } from "@/lib/socket";
 import { VoiceActivityIndicator } from "@/components/meeting/VoiceActivityIndicator";
@@ -261,13 +262,15 @@ export function PreviewLobby({
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const isDrawerOpen = useVisualEffectsStore((s) => s.isDrawerOpen);
   const setDrawerOpen = useVisualEffectsStore((s) => s.setDrawerOpen);
-  const effectsConfig = useVisualEffectsStore((s) => ({
-    selectedBackground: s.selectedBackground,
-    blurIntensity: s.blurIntensity,
-    appearanceFilter: s.appearanceFilter,
-    portraitLighting: s.portraitLighting,
-    beautyIntensity: s.beautyIntensity,
-  }));
+  const effectsConfig = useVisualEffectsStore(
+    useShallow((s) => ({
+      selectedBackground: s.selectedBackground,
+      blurIntensity: s.blurIntensity,
+      appearanceFilter: s.appearanceFilter,
+      portraitLighting: s.portraitLighting,
+      beautyIntensity: s.beautyIntensity,
+    }))
+  );
   const participants = useMeetingStore((s) => s.participants || []);
   const micLevel = useMicLevel(previewStream, isMicOn);
   const rawCameraTrack = previewStream?.getVideoTracks()[0] ?? null;
