@@ -307,7 +307,7 @@ const ParticipantVideo = memo(function ParticipantVideo({
       autoPlay
       playsInline
       muted={muted}
-      className={`w-full h-full rounded-2xl ${fit === "contain" ? "object-contain bg-black" : "object-cover"}`}
+      className={`w-full h-full rounded-2xl ${fit === "contain" ? "object-contain bg-black" : "object-cover"} ${isLocal ? "scale-x-[-1]" : ""}`}
     />
   );
 });

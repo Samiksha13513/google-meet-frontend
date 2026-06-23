@@ -287,7 +287,7 @@ export function PreviewLobby({
         autoPlay
         muted
         playsInline
-        className={`h-full w-full object-cover ${isCameraOn ? "block" : "hidden"}`}
+        className={`h-full w-full object-cover scale-x-[-1] ${isCameraOn ? "block" : "hidden"}`}
       />
 
       {!isCameraOn && (
