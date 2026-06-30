@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  
   output: "standalone",
 
   images: {
@@ -11,7 +12,9 @@ const nextConfig: NextConfig = {
         pathname: "/gweb-workspace-assets/uploads/**",
       },
     ],
+
     dangerouslyAllowSVG: true,
+
   },
 };
 
