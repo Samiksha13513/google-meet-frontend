@@ -14,7 +14,7 @@ echo "Deploying Backend..."
 
 cd /home/ubuntu/google-meet/backend
 
-git checkout -b main
+git checkout main
 git pull origin main
 
 npm install
@@ -32,9 +32,9 @@ fi
 echo ""
 echo "Deploying Frontend..."
 
-cd /home/ubuntu/google-meet-
+cd /home/ubuntu/google-meet-frontend
 
-git checkout -b dev
+git checkout dev
 
 git pull origin dev
 
