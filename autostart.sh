@@ -18,6 +18,7 @@ git checkout main
 git pull origin main
 
 npm install
+npm run build
 
 # Restart if exists, otherwise start
 if pm2 describe backend > /dev/null; then
